@@ -1,0 +1,10 @@
+# 王铁 OS — DSH profile 层插件补丁。
+# 这一行让 wangtie-os 作为 bundle 插件进入 web profile 的启动层栈；
+# loader 会加载包的 main（lib/index.js）并把 config 传给 apply()。
+- insert:
+    - id: wangtie-os
+      name: wangtie-os
+      # 可选的 profile 级覆盖配置（示例，默认值见 src/index.ts）：
+      # config:
+      #   routePrefix: /wangtie-os
+      #   dataDirectory: undefined   # 默认 $DSH_HOME/wangtie-os
