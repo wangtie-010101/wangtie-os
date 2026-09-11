@@ -30,73 +30,11 @@ module.exports = __toCommonJS(client_exports);
 var import_react = require("react");
 var name = "wangtie-os";
 var inject = ["slots"];
-var open = false;
-var listeners = /* @__PURE__ */ new Set();
-function setOpen(value) {
-  open = value;
-  for (const listener of [...listeners]) listener();
-}
-function subscribe(listener) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-function useOpen() {
-  return (0, import_react.useSyncExternalStore)(subscribe, () => open);
-}
-function FullScreenApp() {
-  const opened = useOpen();
-  if (!opened) return null;
-  return (0, import_react.createElement)(
-    "div",
-    {
-      style: {
-        position: "fixed",
-        inset: 0,
-        zIndex: 999,
-        background: "#f4f6fa",
-        display: "flex",
-        flexDirection: "column"
-      }
-    },
-    (0, import_react.createElement)(
-      "div",
-      {
-        style: {
-          height: 42,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "0 14px",
-          background: "#101728",
-          color: "#fff",
-          fontSize: 13
-        }
-      },
-      (0, import_react.createElement)("span", { style: { fontWeight: 700 } }, "\u738B\u94C1 OS"),
-      (0, import_react.createElement)("button", {
-        onClick: () => setOpen(false),
-        style: {
-          background: "transparent",
-          color: "#cdd7ea",
-          border: "1px solid #3a4a6e",
-          borderRadius: 6,
-          padding: "3px 10px",
-          cursor: "pointer",
-          fontSize: 12
-        }
-      }, "\u8FD4\u56DE DSH")
-    ),
-    (0, import_react.createElement)("iframe", {
-      src: "/wangtie-os/",
-      style: { flex: 1, width: "100%", border: "none", background: "#f4f6fa" },
-      title: "\u738B\u94C1 OS"
-    })
-  );
-}
 function SidebarTrigger() {
-  const opened = useOpen();
   return (0, import_react.createElement)("button", {
-    onClick: () => setOpen(!opened),
+    onClick: () => {
+      window.open("/wangtie-os", "_blank", "noopener");
+    },
     style: {
       width: "100%",
       padding: "7px 10px",
@@ -104,20 +42,14 @@ function SidebarTrigger() {
       fontSize: 12,
       borderRadius: 6,
       border: "none",
-      background: opened ? "#2b3a5e" : "transparent",
-      color: opened ? "#fff" : "#cdd7ea",
+      background: "transparent",
+      color: "#cdd7ea",
       textAlign: "left"
-    }
-  }, opened ? "\u9000\u51FA \u738B\u94C1 OS" : "\u{1F34A} \u738B\u94C1 OS");
+    },
+    title: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00\u738B\u94C1 OS"
+  }, "\u{1F34A} \u738B\u94C1 OS");
 }
 function apply(ctx) {
-  ctx.slots.inject("shell.overlay", () => ctx.slots.register({
-    name: "shell.overlay",
-    id: "wangtie-os-app",
-    order: 100,
-    label: () => "\u738B\u94C1 OS",
-    inject: () => ({})
-  }, () => (0, import_react.createElement)(FullScreenApp)));
   ctx.slots.inject("sidebar.footer.action", () => ctx.slots.register({
     name: "sidebar.footer.action",
     id: "wangtie-os-trigger",

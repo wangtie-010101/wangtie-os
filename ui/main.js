@@ -17,13 +17,20 @@ const state = { env: 'SIT', instance: 'scb-online', page: 'dashboard' }
 const $ = (el) => document.querySelector(el)
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]))
 async function api(path, options = {}) {
-  const res = await fetch(`${API}${path}`, {
-    headers: { 'content-type': 'application/json' },
-    ...options,
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
-  return data
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 12000) // 12s 超时，避免界面一直转圈
+  try {
+    const res = await fetch(`${API}${path}`, {
+      headers: { 'content-type': 'application/json' },
+      signal: controller.signal,
+      ...options,
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+    return data
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function rendered(node) {
@@ -33,14 +40,16 @@ function rendered(node) {
 function shell(page) {
   const nav = [
     ['dashboard', '工作台', '🏠'],
+    ['__group__', '常用业务'],
     ['query', '数据查询', '🔍'],
     ['knowledge', '知识库', '📚'],
-    ['agent', '王铁 Agent', '🤖'],
     ['dictionary', '数据字典工具', '📖'],
-    ['metadata', '元数据管理', '🗂️'],
+    ['__group__', '效率工具'],
     ['notes', '记事本', '📝'],
     ['devtools', '常用开发工具', '🧰'],
+    ['__group__', '放松一下'],
     ['entertainment', '休息一下', '🎮'],
+    ['health', '健康提醒', '⏰'],
   ]
   const el = document.createElement('div')
   el.className = 'layout'
@@ -54,10 +63,12 @@ function shell(page) {
         </div>
       </div>
       <nav class="nav">
-        ${nav.map(([id, label, ico]) => `
-          <div class="nav-item ${state.page === id ? 'active' : ''}" data-page="${id}">
-            <span class="ico">${ico}</span><span>${label}</span>
-          </div>`).join('')}
+        ${nav.map(([id, label, ico]) =>
+          id === '__group__'
+            ? `<div class="nav-group">${label}</div>`
+            : `<div class="nav-item ${state.page === id ? 'active' : ''}" data-page="${id}">
+              <span class="ico">${ico}</span><span>${label}</span>
+            </div>`).join('')}
       </nav>
     </aside>
     <div class="main">
@@ -101,7 +112,7 @@ function table(columns, rows, emptyText = '暂无数据') {
 const WEATHER_DEFAULT_CITY = '北京'
 const WEATHER_KEY = 'wt-weather-city'
 const WEATHER_AUTO_KEY = 'wt-weather-auto'
-const WEATHER_S = { city: '', data: null, ts: 0, busy: false }
+const WEATHER_S = { city: '', data: null, ts: 0, busy: false, docHandler: null }
 
 const WMO = {
   0: ['☀️', '晴'], 1: ['🌤️', '晴间多云'], 2: ['⛅', '多云'], 3: ['☁️', '阴'],
@@ -247,9 +258,12 @@ function initWeatherWidget(root) {
     <div class="weather-wrap">
       <button class="weather-chip" id="w-chip" title="查看 / 切换城市">${chipHtml(null, true)}</button>
       <div class="weather-panel" id="w-panel" hidden>
-        <div class="w-head">🌍 天气 <span class="muted">Open-Meteo · 免费数据</span></div>
+        <div class="row" style="justify-content:space-between;margin-bottom:4px">
+          <div class="w-head">🌍 天气 <span class="muted">Open-Meteo</span></div>
+          <button class="btn sm" id="w-refresh" title="刷新天气">🔄</button>
+        </div>
         <div class="row" style="margin:8px 0">
-          <input type="text" id="w-city" placeholder="输入城市名，如 上海" style="flex:1">
+          <input type="text" id="w-city" placeholder="输入城市名，如 北京" style="flex:1">
           <button class="btn primary sm" id="w-go">查询</button>
         </div>
         <div class="row w-quick" id="w-quick">
@@ -268,7 +282,7 @@ function initWeatherWidget(root) {
     info.innerHTML = `
       <div class="w-main">${ico} <b>${d.temp}°C</b> <span>${desc}</span></div>
       <div class="muted w-sub">${esc(d.city)}${d.admin ? '（' + esc(d.admin) + '）' : ''}</div>
-      <div class="muted w-sub">体感 ${d.feel}° · 湿度 ${d.hum}% · 风速 ${d.wind} km/h</div>`
+      <div class="muted w-sub">体感 ${d.feel}° · 湿度 ${d.hum}% · 风速 ${d.wind} km/h · 更新 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}</div>`
   }
   const doQuery = async (name, force) => {
     const target = (name || cityInput.value || '').trim()
@@ -290,32 +304,43 @@ function initWeatherWidget(root) {
   root.querySelectorAll('#w-quick [data-city]').forEach((b) => {
     b.onclick = () => { cityInput.value = b.dataset.city; void doQuery(b.dataset.city) }
   })
-  // 启动默认查询：已保存城市 > IP 自动定位 > 默认北京
+  const refreshBtn = root.querySelector('#w-refresh')
+  if (refreshBtn) refreshBtn.onclick = () => {
+    const name = (WEATHER_S.city || cityInput.value || '').trim() || '北京'
+    void doQuery(name, true)
+  }
+  // 点击弹窗以外的区域时自动关闭（每次重建只保留一个全局监听，避免重复）
+  if (WEATHER_S.docHandler) document.removeEventListener('pointerdown', WEATHER_S.docHandler)
+  WEATHER_S.docHandler = (e) => {
+    const wrapEl = root.querySelector('.weather-wrap')
+    if (wrapEl && !wrapEl.contains(e.target) && !panel.hidden) panel.hidden = true
+  }
+  document.addEventListener('pointerdown', WEATHER_S.docHandler)
+
+  // 启动默认查询：默认显示「北京」；只有用户在面板里手动选择过城市时才记住并优先显示
   const runDefault = async () => {
     if (WEATHER_S.data && Date.now() - WEATHER_S.ts < 10 * 60 * 1000) {
       chip.innerHTML = chipHtml(WEATHER_S.data)
       renderInfo(WEATHER_S.data)
       return
     }
-    chip.innerHTML = '天气定位中…'
+    chip.innerHTML = '天气加载中…'
     try {
       let savedCity = null
-      try { savedCity = localStorage.getItem(WEATHER_KEY) } catch (error) { /* ignore */ }
-      let d = null
-      if (savedCity) {
-        d = await weatherRefresh(savedCity)
-      } else {
-        const det = await detectLocation()
-        if (det) {
-          d = await weatherFetchCoord(det.lat, det.lon, det.label || '当前位置', det.admin || '')
-          try {
-            localStorage.setItem(WEATHER_KEY, det.label || 'auto')
-            localStorage.setItem(WEATHER_AUTO_KEY, '1')
-          } catch (error) { /* ignore */ }
-        } else {
-          d = await weatherRefresh(WEATHER_DEFAULT_CITY) // 探测失败 → 默认北京
-        }
+      let savedAuto = null
+      try {
+        savedCity = localStorage.getItem(WEATHER_KEY)
+        savedAuto = localStorage.getItem(WEATHER_AUTO_KEY)
+      } catch (error) { /* ignore */ }
+      // 兼容迁移：旧版本曾把默认「上海」写为手动选择；按新默认要求清除上海遗留
+      if (savedCity === '上海') {
+        try { localStorage.removeItem(WEATHER_KEY); localStorage.removeItem(WEATHER_AUTO_KEY) } catch (err) { /* ignore */ }
+        savedCity = null
+        savedAuto = null
       }
+      // 仅当存在「手动选择」标记（auto=0）时采用已存城市；旧版/自动产生的缓存一律忽略
+      const useSaved = !!savedCity && savedAuto === '0'
+      const d = useSaved ? await weatherRefresh(savedCity) : await weatherRefresh(WEATHER_DEFAULT_CITY)
       WEATHER_S.city = d.city
       WEATHER_S.data = d
       WEATHER_S.ts = Date.now()
@@ -336,12 +361,11 @@ PAGES.dashboard = async (el) => {
     <div class="grid">
       ${[
         ['knowledge', '📚', '知识库', '票据 / 会计两级知识库：检索问答 + 知识投喂（RAG）'],
-        ['query', '🔍', '数据查询', '多环境 SQL 查询，表名自动补全'],
-        ['agent', '🤖', '王铁 Agent', '日志关键字检索与异常链分析'],
+        ['query', '🔍', '数据查询', '自定义数据库连接（7 类）与 SQL 查询'],
         ['dictionary', '📖', '数据字典工具', '字典一键导入 / 搜索 / 分类'],
-        ['metadata', '🗂️', '元数据管理', '表清单 / 表结构比对 / 版本历史'],
+        ['health', '⏰', '健康提醒', '到点提醒喝水 / 运动 / 休息'],
         ['notes', '📝', '记事本', '记录开发常用命令 / 配置 / 笔记，自动保存'],
-        ['devtools', '🧰', '常用开发工具', 'JSON 解析 / Base64 / 时间戳等在线工具'],
+        ['devtools', '🧰', '常用开发工具', '12 个在线工具：JSON / 压缩 / 大小写等'],
         ['entertainment', '🎮', '休息一下', '雷霆战机等内置小游戏'],
       ].map(([page, ico, name, desc]) =>
         `<div class="card quick" data-page="${page}"><h3>${ico} ${name}</h3><div class="muted">${desc}</div></div>`).join('')}
@@ -366,9 +390,8 @@ PAGES.dashboard = async (el) => {
     const MODULE_LINES = [
       ['数据查询', '自定义数据库连接与 SQL 查询'],
       ['知识库', '票据 / 会计知识检索与投喂'],
-      ['王铁 Agent', '日志检索与异常链分析'],
       ['数据字典', '字典检索与一键导入'],
-      ['元数据管理', '表结构管理与版本比对'],
+      ['健康提醒', '到点提醒喝水 / 运动 / 休息'],
       ['记事本', 'Markdown 三栏笔记'],
       ['常用开发工具', '常用开发在线工具'],
       ['休息一下', '内置小游戏'],
@@ -388,9 +411,7 @@ PAGES.dashboard = async (el) => {
     const FALLBACK_LINES = [
       ['数据查询', '自定义数据库连接与 SQL 查询'],
       ['知识库', '票据 / 会计知识检索与投喂'],
-      ['王铁 Agent', '日志检索与异常链分析'],
       ['数据字典', '字典检索与一键导入'],
-      ['元数据管理', '表结构管理与版本比对'],
       ['记事本', 'Markdown 三栏笔记'],
       ['常用开发工具', '常用开发在线工具'],
       ['休息一下', '内置小游戏'],
@@ -407,55 +428,67 @@ PAGES.dashboard = async (el) => {
 /* -------------------------------- 数据查询 ------------------------------ */
 
 PAGES.query = async (el) => {
-  // 常用数据库类型与默认端口（与后端 /api/db/test 的默认端口一致）
+  // ── 主流工具式「数据查询」：连接档案 / SQL 模板·历史·收藏 / 结果过滤与导出 ──
   const DB_TYPES = [
-    ['oracle', 'Oracle'],
-    ['mysql', 'MySQL'],
-    ['postgresql', 'PostgreSQL'],
-    ['sqlserver', 'SQL Server'],
-    ['dm', '达梦 DM'],
-    ['kingbase', '人大金仓 Kingbase'],
-    ['oceanbase', 'OceanBase'],
+    ['oracle', 'Oracle'], ['mysql', 'MySQL'], ['postgresql', 'PostgreSQL'],
+    ['sqlserver', 'SQL Server'], ['dm', '达梦 DM'], ['kingbase', '人大金仓 Kingbase'], ['oceanbase', 'OceanBase'],
   ]
-  const DB_DEFAULT_PORT = {
-    oracle: 1521, mysql: 3306, postgresql: 5432, sqlserver: 1433,
-    dm: 5236, kingbase: 54321, oceanbase: 2881,
-  }
-  const DB_PROFILE_KEY = 'wangtie-db-profile'
+  const DB_DEFAULT_PORT = { oracle: 1521, mysql: 3306, postgresql: 5432, sqlserver: 1433, dm: 5236, kingbase: 54321, oceanbase: 2881 }
+  const LS = { profile: 'wt-db-profiles', history: 'wt-sql-history', favs: 'wt-sql-favs', active: 'wt-db-active' }
+
+  const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch (e) { return d } }
+  const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch (e) { /* ignore */ } }
+
+  let profiles = lsGet(LS.profile, [])
+  let history = lsGet(LS.history, [])
+  let favs = lsGet(LS.favs, [])
+  let lastRes = null          // { columns, rows }
+  let filterText = ''
+  let limitRows = 200
 
   el.innerHTML = `
-    <div class="section-title">数据查询 <span class="muted">自定义数据库连接 · SQL 执行（当前为 Mock 数据源演示）</span></div>
+    <div class="section-title">数据查询 <span class="muted">连接管理 · SQL 编辑器 · 结果网格（当前为内置演示数据源）</span></div>
 
     <div class="card">
       <h3>🔌 数据库连接 <span class="muted" id="db-note"></span></h3>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:8px 18px;margin-bottom:10px">
-        <div class="row"><span class="muted" style="width:130px">数据库类型</span>
-          <select id="db-type" style="flex:1">${DB_TYPES.map(([v, label]) => `<option value="${v}">${label}</option>`).join('')}</select></div>
-        <div class="row"><span class="muted" style="width:130px">数据库地址</span>
-          <input type="text" id="db-host" placeholder="IP / 域名，如 10.23.144.212" style="flex:1"></div>
-        <div class="row"><span class="muted" style="width:130px">端口</span>
-          <input type="text" id="db-port" placeholder="留空自动按类型填充" style="flex:1"></div>
-        <div class="row"><span class="muted" style="width:130px">数据库名 / SID</span>
-          <input type="text" id="db-name" placeholder="可留空" style="flex:1"></div>
-        <div class="row"><span class="muted" style="width:130px">用户名</span>
-          <input type="text" id="db-user" placeholder="请输入用户名" style="flex:1"></div>
-        <div class="row"><span class="muted" style="width:130px">密码</span>
-          <input type="password" id="db-pass" placeholder="请输入密码" style="flex:1">
+        <div class="row"><span class="muted" style="width:130px">档案名称</span><input type="text" id="db-title" placeholder="如 生产票据库" style="flex:1"></div>
+        <div class="row"><span class="muted" style="width:130px">数据库类型</span><select id="db-type" style="flex:1">${DB_TYPES.map(([v, label]) => `<option value="${v}">${label}</option>`).join('')}</select></div>
+        <div class="row"><span class="muted" style="width:130px">数据库地址</span><input type="text" id="db-host" placeholder="IP / 域名" style="flex:1"></div>
+        <div class="row"><span class="muted" style="width:130px">端口</span><input type="text" id="db-port" placeholder="留空自动按类型填充" style="flex:1"></div>
+        <div class="row"><span class="muted" style="width:130px">数据库 / SID</span><input type="text" id="db-name" placeholder="可留空" style="flex:1"></div>
+        <div class="row"><span class="muted" style="width:130px">用户名</span><input type="text" id="db-user" placeholder="请输入用户名" style="flex:1"></div>
+        <div class="row"><span class="muted" style="width:130px">密码</span><input type="password" id="db-pass" placeholder="请输入密码" style="flex:1">
           <button type="button" class="btn sm" id="db-pass-eye" title="显示 / 隐藏密码">👁</button></div>
       </div>
       <div class="row">
+        <button class="btn sm" id="db-save">💾 另存为连接档案</button>
+        <button class="btn sm danger" id="db-delete" title="删除当前档案">🗑</button>
         <button class="btn primary" id="db-test">🧪 测试连接</button>
-        <button class="btn" id="db-save">💾 保存配置</button>
         <span id="db-test-res" class="muted"></span>
       </div>
+      <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px" id="qp-list"></div>
     </div>
 
     <div class="card">
-      <h3>SQL 执行 <span class="muted">表名自动补全（Mock 结果；接入真实数据库网关后直连查询）</span></h3>
-      <textarea id="sql-text" rows="4" placeholder="请输入您的SQL语句"></textarea>
-      <div class="row" style="margin-top:10px">
+      <h3 style="display:flex;align-items:center;gap:8px">
+        SQL 编辑器
+        <button class="btn sm" id="q-fav" title="收藏当前 SQL">★ 收藏</button>
+        <span class="muted" style="font-size:12px">Ctrl/Cmd + Enter 执行</span>
+      </h3>
+      <div class="row" style="margin-bottom:8px;gap:6px;flex-wrap:wrap">
+        <select id="sql-hist" style="max-width:230px"><option value="">🕘 历史记录…</option></select>
+        <select id="sql-fav" style="max-width:230px"><option value="">★ 我的收藏…</option></select>
+        <button class="btn sm" id="q-clear">清空</button>
+      </div>
+      <textarea id="sql-text" rows="7" placeholder="请输入您的SQL语句"></textarea>
+      <div class="row" style="margin-top:10px;gap:6px;flex-wrap:wrap">
         <button class="btn primary" id="sql-run">▶ 执行查询</button>
         <button class="btn" id="sql-export">导出 CSV</button>
+        <button class="btn" id="sql-json">导出 JSON</button>
+        <span class="muted">返回行数 ≤</span>
+        <select id="sql-limit"><option>50</option><option selected>200</option><option>1000</option></select>
+        <input type="text" id="res-filter" placeholder="🔍 过滤当前结果…" style="flex:1;min-width:140px">
         <span class="muted" id="sql-cost"></span>
       </div>
     </div>
@@ -463,7 +496,9 @@ PAGES.query = async (el) => {
 
   const $id = (id) => el.querySelector('#' + id)
 
+  /* ---------- 连接档案 ---------- */
   const readProfile = () => ({
+    title: $id('db-title').value.trim(),
     type: $id('db-type').value,
     host: $id('db-host').value.trim(),
     port: $id('db-port').value.trim(),
@@ -471,114 +506,192 @@ PAGES.query = async (el) => {
     username: $id('db-user').value.trim(),
     password: $id('db-pass').value,
   })
-
-  const applyProfile = (profile) => {
-    if (!profile) return
-    $id('db-type').value = profile.type || 'mysql'
-    $id('db-host').value = profile.host || ''
-    $id('db-port').value = profile.port || ''
-    $id('db-name').value = profile.dbName || ''
-    $id('db-user').value = profile.username || ''
-    $id('db-pass').value = profile.password || ''
-    if (!$id('db-port').value) $id('db-port').value = DB_DEFAULT_PORT[$id('db-type').value] || ''
+  const applyProfile = (p) => {
+    $id('db-title').value = p.title || ''
+    $id('db-type').value = p.type || 'mysql'
+    $id('db-host').value = p.host || ''
+    $id('db-port').value = p.port || ''
+    $id('db-name').value = p.dbName || ''
+    $id('db-user').value = p.username || ''
+    $id('db-pass').value = p.password || ''
   }
-
-  // 载入本机已保存的配置
-  try {
-    applyProfile(JSON.parse(localStorage.getItem(DB_PROFILE_KEY) || 'null'))
-  } catch (error) { /* ignore */ }
-
-  // 切换类型时自动填充默认端口（端口为空，或等于任一类型的默认端口时覆盖）
-  $id('db-type').addEventListener('change', () => {
-    const cur = $id('db-port').value.trim()
-    const isDefault = Object.values(DB_DEFAULT_PORT).some((p) => String(p) === cur)
-    if (cur === '' || isDefault) {
-      $id('db-port').value = DB_DEFAULT_PORT[$id('db-type').value] || ''
-    }
-  })
-
-  // 显示 / 隐藏密码（明文查看）
-  const passEye = $id('db-pass-eye')
-  if (passEye) {
-    passEye.onclick = () => {
-      const pass = $id('db-pass')
-      const show = pass.type === 'password'
-      pass.type = show ? 'text' : 'password'
-      passEye.textContent = show ? '🙈' : '👁'
-      passEye.title = show ? '隐藏密码' : '显示密码'
-      pass.focus()
-    }
+  const renderProfiles = () => {
+    const box = $id('qp-list')
+    if (!profiles.length) { box.innerHTML = '<span class="muted">尚无连接档案，填写上方信息后点「另存为连接档案」</span>'; return }
+    const active = lsGet(LS.active, '')
+    box.innerHTML = profiles.map((p, i) => `
+      <button class="btn sm tag-chip ${p.key === active ? 'active' : ''}" data-i="${i}">
+        ${esc(p.title || p.host || ('档案' + (i + 1)))}${p.host ? ' · ' + esc(p.host) : ''}
+      </button>`).join('')
+    box.querySelectorAll('[data-i]').forEach((b) => {
+      b.onclick = () => {
+        const p = profiles[Number(b.dataset.i)]
+        applyProfile(p)
+        lsSet(LS.active, p.key)
+        renderProfiles()
+        $id('db-note').textContent = `已载入档案：${p.title || p.host}`
+      }
+    })
   }
-
-  const setTestResult = (html, ok) => {
+  $id('db-save').onclick = () => {
+    const p = readProfile()
+    if (!p.host) { $id('db-note').textContent = '请至少填写数据库地址'; return }
+    const key = (p.title || p.host || '档案').trim() + '|' + Date.now()
+    p.key = key
+    profiles = profiles.filter((x) => x.key !== key)
+    profiles.unshift(p)
+    lsSet(LS.profile, profiles)
+    lsSet(LS.active, key)
+    $id('db-note').textContent = '✓ 档案已保存并设为当前'
+    renderProfiles()
+  }
+  $id('db-delete').onclick = () => {
+    const p = readProfile()
+    const hit = profiles.find((x) => x.key === lsGet(LS.active, '') || (x.title === p.title && x.host === p.host))
+    if (!hit || !window.confirm('确定删除当前连接档案？')) return
+    profiles = profiles.filter((x) => x.key !== hit.key)
+    lsSet(LS.profile, profiles)
+    renderProfiles()
+    $id('db-note').textContent = '已删除档案'
+  }
+  $id('db-pass-eye').onclick = () => {
+    const pass = $id('db-pass')
+    const show = pass.type === 'password'
+    pass.type = show ? 'text' : 'password'
+    $id('db-pass-eye').textContent = show ? '🙈' : '👁'
+  }
+  const setTest = (html, ok) => {
     const node = $id('db-test-res')
     node.innerHTML = html
     node.style.color = ok === true ? 'var(--green)' : (ok === false ? 'var(--red)' : 'var(--text-2)')
   }
-
-  // —— 测试连接：由后端真实探测 地址:端口 ——
   $id('db-test').onclick = async () => {
     const profile = readProfile()
-    if (!profile.host) {
-      setTestResult('✗ 请先填写数据库地址', false)
-      return
-    }
-    setTestResult('正在测试连接（后端 TCP 探测）…', null)
+    if (!profile.host) { setTest('✗ 请先填写数据库地址', false); return }
+    setTest('正在测试连接（后端 TCP 探测）…')
     try {
       const data = await api('/api/db/test', { method: 'POST', body: JSON.stringify(profile) })
-      if (data.ok) {
-        setTestResult(`✓ <b>连接成功</b> · ${esc(data.host)}:${data.port}（${data.ms}ms）— ${esc(data.detail)}`, true)
-      } else {
-        setTestResult(`✗ <b>连接失败</b> · ${esc(data.code || '')} — ${esc(data.detail || '目标不可达')}`, false)
-      }
+      setTest(data.ok ? `✓ <b>连接成功</b> · ${esc(data.host)}:${data.port}（${data.ms}ms）` : `✗ 连接失败 · ${esc(data.code || '')} — ${esc(data.detail || '')}`, data.ok)
     } catch (error) {
-      const message = String(error)
-      setTestResult(
-        message.includes('404')
-          ? '✗ 探测接口尚未生效：后端改动需要<b>重启 DSH Web</b> 后才能启用（其余配置与保存不受影响）'
-          : `✗ 测试请求失败：${esc(message)}`, false)
+      setTest(String(error).includes('404')
+        ? '✗ 探测接口需重启 DSH Web 后启用（连接档案与 SQL 不受影响）'
+        : `✗ 测试请求失败：${esc(String(error))}`, false)
     }
   }
 
-  // —— 保存配置（本机浏览器）——
-  $id('db-save').onclick = () => {
-    try {
-      localStorage.setItem(DB_PROFILE_KEY, JSON.stringify(readProfile()))
-      $id('db-note').textContent = '✓ 已保存（存储于本机浏览器）'
-    } catch (error) {
-      $id('db-note').textContent = '保存失败：' + String(error)
-    }
-  }
+  // 类型切换自动填端口
+  $id('db-type').addEventListener('change', () => {
+    const cur = $id('db-port').value.trim()
+    const isDefault = Object.values(DB_DEFAULT_PORT).some((p) => String(p) === cur)
+    if (cur === '' || isDefault) $id('db-port').value = DB_DEFAULT_PORT[$id('db-type').value] || ''
+  })
 
-  // —— SQL 执行（Mock 演示）——
+  /* ---------- SQL 历史 / 收藏 / 模板 ---------- */
+  const fillSelect = (sel, arr, labelField) => {
+    sel.innerHTML = `<option value="">${sel === $id('sql-hist') ? '🕘 历史记录…' : '★ 我的收藏…'}</option>` +
+      arr.map((it, i) => `<option value="${i}">${esc(it[labelField]).slice(0, 42)}</option>`).join('')
+  }
+  fillSelect($id('sql-hist'), history, 0)
+  fillSelect($id('sql-fav'), favs, 'name')
+
+  $id('sql-hist').onchange = () => {
+    const v = Number($id('sql-hist').value)
+    if (Number.isFinite(v) && history[v]) { $id('sql-text').value = history[v]; $id('sql-hist').value = '' }
+  }
+  $id('sql-fav').onchange = () => {
+    const v = Number($id('sql-fav').value)
+    if (Number.isFinite(v) && favs[v]) { $id('sql-text').value = favs[v].sql; $id('sql-fav').value = '' }
+  }
+  $id('q-fav').onclick = () => {
+    const sql = $id('sql-text').value.trim()
+    if (!sql) return
+    const name = window.prompt('收藏名称：', sql.slice(0, 24))
+    if (name === null) return
+    favs.unshift({ name: name.trim() || sql.slice(0, 24), sql })
+    favs = favs.slice(0, 50)
+    lsSet(LS.favs, favs)
+    fillSelect($id('sql-fav'), favs, 'name')
+    $id('db-note').textContent = '✓ 已收藏'
+  }
+  $id('q-clear').onclick = () => { $id('sql-text').value = ''; $id('sql-result').innerHTML = ''; lastRes = null }
+
+  /* ---------- 执行与结果 ---------- */
+  const renderGrid = () => {
+    const box = $id('sql-result')
+    if (!lastRes) return
+    const { columns, rows } = lastRes
+    let list = rows
+    const kw = filterText.trim().toLowerCase()
+    if (kw) list = rows.filter((r) => columns.some((c) => String(r[c.name] ?? '').toLowerCase().includes(kw)))
+    list = list.slice(0, limitRows)
+    box.innerHTML = card(`查询结果（${columns.length} 列 × ${rows.length} 行${kw ? ' · 过滤后 ' + list.length + ' 行' : ''}${rows.length > limitRows ? ' · 仅显示前 ' + limitRows + ' 行' : ''}）`,
+      list.length ? `<div style="overflow:auto;max-height:520px">${table(columns.map((c) => `${c.name} (${c.cn})`), list.map((r) => columns.map((c) => r[c.name] ?? '')))}</div>` : '<div class="empty">无匹配结果</div>')
+  }
   const run = async () => {
     const sql = $id('sql-text').value
     const box = $id('sql-result')
-    box.innerHTML = `<div class="loading">执行中…</div>`
+    if (!sql.trim()) { box.innerHTML = '<div class="muted">请先输入或从模板选择一条 SQL</div>'; return }
+    limitRows = Number($id('sql-limit').value) || 200
+    filterText = ''
+    if ($id('res-filter')) $id('res-filter').value = ''
+    box.innerHTML = '<div class="loading">执行中…</div>'
     try {
       const data = await api('/api/sql/query', { method: 'POST', body: JSON.stringify({ sql }) })
-      $id('sql-cost').textContent = `cost ${data.costMs}ms · 表 ${data.table ?? '未识别'}`
       if (!data.table) {
-        box.innerHTML = `<div class="card"><div class="muted">${esc(data.message)}</div></div>`
+        box.innerHTML = `<div class="card"><div class="muted">${esc(data.message)}</div>
+          <div class="tip" style="margin-top:8px">💡 当前为内置演示数据源：请从上方「📋 模板」选择可运行示例，或在档案中配置真实数据库后由网关直连。</div></div>`
         return
       }
-      box.innerHTML = card('查询结果', table(
-        data.columns.map((col) => `${col.name} (${col.cn})`),
-        data.rows.map((row) => data.columns.map((col) => row[col.name] ?? '')),
-      ))
+      lastRes = { columns: data.columns, rows: data.rows }
+      $id('sql-cost').textContent = `cost ${data.costMs}ms · ${data.rows.length} 行 × ${data.columns.length} 列`
+      renderGrid()
+      // 记录历史
+      history = history.filter((h) => h !== sql)
+      history.unshift(sql)
+      history = history.slice(0, 20)
+      lsSet(LS.history, history)
+      fillSelect($id('sql-hist'), history, 0)
     } catch (error) {
       box.innerHTML = `<div class="error-text">${esc(String(error))}</div>`
     }
   }
   $id('sql-run').onclick = run
-  $id('sql-export').onclick = async () => {
-    const rows = el.querySelectorAll('#sql-result tbody tr')
-    const csv = [...rows].map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent).join(',')).join('\n')
+  $id('sql-text').addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); void run() }
+  })
+  $id('res-filter').addEventListener('input', (e) => { filterText = e.target.value; renderGrid() })
+  $id('sql-limit').addEventListener('change', (e) => { limitRows = Number(e.target.value) || 200; renderGrid() })
+
+  const exportRows = () => {
+    if (!lastRes) return []
+    const { columns, rows } = lastRes
+    let list = rows
+    const kw = filterText.trim().toLowerCase()
+    if (kw) list = rows.filter((r) => columns.some((c) => String(r[c.name] ?? '').toLowerCase().includes(kw)))
+    return { columns, rows: list.slice(0, limitRows) }
+  }
+  $id('sql-export').onclick = () => {
+    const { columns, rows } = exportRows()
+    const csv = [columns.map((c) => c.cn).join(',')].concat(rows.map((r) => columns.map((c) => `"${String(r[c.name] ?? '').replace(/"/g, '""')}"`).join(','))).join('\n')
     const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }))
     a.download = 'query-result.csv'
     a.click()
   }
+  $id('sql-json').onclick = () => {
+    const { columns, rows } = exportRows()
+    const json = rows.map((r) => Object.fromEntries(columns.map((c) => [c.name, r[c.name] ?? null])))
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' }))
+    a.download = 'query-result.json'
+    a.click()
+  }
+
+  // 载入当前档案
+  const activeKey = lsGet(LS.active, '')
+  const activeProfile = profiles.find((p) => p.key === activeKey) || profiles[0]
+  if (activeProfile) applyProfile(activeProfile)
+  renderProfiles()
 }
 
 /* -------------------------------- 知识库 -------------------------------- */
@@ -682,6 +795,7 @@ function addCustomDocs(ns, rawDocs) {
       summary,
       paragraphs,
       custom: true,
+      ...(raw.image ? { image: raw.image } : {}),
     })
     added += 1
   })
@@ -751,6 +865,40 @@ function readFileAsBuffer(file) {
     reader.readAsArrayBuffer(file)
   })
 }
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('读取图片失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+// 图片压缩后转 JPEG dataURL（控制投喂体积，gif/png 透明底补白）
+async function downscaleImage(dataUrl, maxSide = 1024, quality = 0.85) {
+  const img = await new Promise((resolve, reject) => {
+    const im = new Image()
+    im.onload = () => resolve(im)
+    im.onerror = () => reject(new Error('图片解码失败（格式不支持）'))
+    im.src = dataUrl
+  })
+  let w = img.naturalWidth || 800
+  let h = img.naturalHeight || 600
+  if (w > maxSide || h > maxSide) {
+    const scale = Math.min(maxSide / w, maxSide / h)
+    w = Math.max(1, Math.round(w * scale))
+    h = Math.max(1, Math.round(h * scale))
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, w, h)
+  ctx.drawImage(img, 0, 0, w, h)
+  return canvas.toDataURL('image/jpeg', quality)
+}
+
 
 // —— Word（.docx）正文提取：.docx 本质是 ZIP，读取 word/document.xml 后按段取文本 ——
 function docxEntries(bytes) {
@@ -856,8 +1004,8 @@ PAGES.knowledge = (el) => {
 
       <div class="card" id="kb-upload" style="display:none">
         <h3>⬆ 上传知识文件批量投喂 → ${name}</h3>
-        <div class="kb-drop" id="kb-drop">点击选择或拖入知识文件（可多选）<br><span class="muted">支持 .txt / .md（【标题】分篇）、.json（文档数组）与 .docx（Word，自动提取正文），一次可投喂大量知识</span></div>
-        <input type="file" id="kb-file" accept=".txt,.md,.markdown,.json,.docx,text/plain,application/json,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
+        <div class="kb-drop" id="kb-drop">点击选择或拖入知识文件（可多选）<br><span class="muted">支持 .txt / .md、.json、.docx（Word 自动提取正文）与 .png/.jpg/.webp/.gif（图片条目，自动压缩保存并可在列表预览）</span></div>
+        <input type="file" id="kb-file" accept=".txt,.md,.markdown,.json,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp,text/plain,application/json,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*" multiple hidden>
         <div class="muted" style="line-height:1.8;margin-top:8px">JSON 示例：<code>[{"title":"票据池业务要点","category":"业务规则","paragraphs":["…","…"]}]</code></div>
         <div class="row" style="margin-top:8px"><span class="muted" id="kb-upload-note"></span></div>
       </div>
@@ -902,7 +1050,24 @@ PAGES.knowledge = (el) => {
     }
 
     const browse = () => {
-      showResult(card(`${name}文档`, table(['文档ID', '标题', '类别', '摘要'], live().map((doc) => [doc.id, doc.title, `${doc.category}${doc.custom ? '（已投喂）' : ''}`, doc.summary]))))
+      const rowsHtml = live().map((doc) => {
+        const imgCell = doc.image ? `<img class="kb-img" src="${doc.image}" alt="${esc(doc.title)}" loading="lazy">` : ''
+        const preview = imgCell ? `<div class="row" style="gap:8px;align-items:center;min-width:220px">${imgCell}<span>${esc(doc.summary)}</span></div>` : esc(doc.summary)
+        return `<tr><td>${esc(doc.id)}</td><td>${esc(doc.title)}${doc.image ? ' <span class="nt-cat">🖼 图片</span>' : ''}</td><td>${esc(doc.category)}${doc.custom ? '（已投喂）' : ''}</td><td>${preview}</td></tr>`
+      }).join('')
+      showResult(card(`${name}文档`, rowsHtml
+        ? `<table><thead><tr><th>文档ID</th><th>标题</th><th>类别</th><th>摘要 / 预览</th></tr></thead><tbody>${rowsHtml}</tbody></table>`
+        : '<div class="empty">暂无文档</div>'))
+      // 图片点击放大（轻量灯箱）
+      root.querySelectorAll('.kb-img').forEach((img) => {
+        img.onclick = () => {
+          const layer = document.createElement('div')
+          layer.className = 'kb-lite'
+          layer.innerHTML = `<img src="${img.src}" alt="">`
+          layer.onclick = () => layer.remove()
+          document.body.append(layer)
+        }
+      })
     }
 
     const ingest = async (rawDocs) => {
@@ -959,6 +1124,15 @@ PAGES.knowledge = (el) => {
             const lines = await extractDocxText(await readFileAsBuffer(file))
             if (!lines.length) throw new Error('Word 文档中未提取到正文')
             docs = [{ title: file.name.replace(/\.docx$/i, '').trim() || 'Word 文档', category: '业务规则', paragraphs: lines }]
+          } else if (/^\.(png|jpe?g|webp|gif|bmp)$/.test(file.name.slice(file.name.lastIndexOf('.')))) {
+            const dataUrl = await downscaleImage(await readFileAsDataURL(file))
+            const base = file.name.replace(/\.[^.]+$/, '').trim() || '图片知识'
+            docs = [{
+              title: base,
+              category: '图片知识',
+              paragraphs: ['（图片条目：图片已保存并在浏览列表预览；建议修改标题说明内容以利检索。如需提取图中文字，可先 OCR/复制文字后粘贴投喂，或接入 OCR 能力。）'],
+              image: dataUrl,
+            }]
           } else {
             const text = await readFileAsText(file)
             docs = lower.endsWith('.json') ? parseJsonDocs(text) : parseDocBlocks(text)
@@ -1005,194 +1179,408 @@ PAGES.knowledge = (el) => {
   renderKb()
 }
 
-/* ------------------------------ 王铁 Agent --------------------------- */
-
-const STEPS = [
-  ['1 下载日志', '下载 scb-online_20260828.log（518.6 KB，按需截取）', '1.2s'],
-  ['2 关键字检索', '命中关键字…（上下各 5 行上下文）', '0.8s'],
-  ['3 去噪', '过滤心跳/常规日志 2 处，保留异常上下文', '0.3s'],
-  ['4 异常链分析', '识别 1 条异常链，1 类报错', '3.1s'],
-  ['5 生成报告', '已保存到历史分析报告', '0.4s'],
-]
-
-PAGES.agent = (el) => {
-  el.innerHTML = `
-    <div class="section-title">王铁 Agent <span class="muted">日志关键字检索（ccc-log-context-skill 演示）</span></div>
-    <div class="card">
-      <div class="row">
-        <span class="muted">实例：</span>
-        <select id="ag-instance"><option>scb-online</option><option>scb-batch</option></select>
-        <input type="text" id="ag-keyword" placeholder="输入检索关键字，例如 WLC1779977345791" style="flex:1">
-        <button class="btn primary" id="ag-run">开始检索</button>
-      </div>
-    </div>
-    <div class="card">
-      <h3>历史分析报告（102）</h3>
-      <div id="ag-reports"><div class="loading">加载中…</div></div>
-    </div>
-    <div id="ag-result"></div>`
-  const refresh = async () => {
-    try {
-      const reports = await api('/api/agent/reports')
-      el.querySelector('#ag-reports').innerHTML = reports.length
-        ? table(['检索线', '环境', '实例', '生成时间', '报错类型', '操作'], reports.map((r) => [r.keyword, r.env, r.instance, r.createdAt, r.errorType, '查看']))
-        : `<div class="empty">暂无报告</div>`
-      el.querySelectorAll('#ag-reports tbody tr').forEach((tr) => {
-        tr.onclick = async () => {
-          const id = reports[tr.rowIndex].id
-          try {
-            const report = await api(`/api/agent/reports?id=${encodeURIComponent(id)}`)
-            show(runReport(report))
-          } catch (error) {
-            show(`<div class="error-text">${esc(String(error))}</div>`)
-          }
-        }
-      })
-    } catch (error) {
-      el.querySelector('#ag-reports').innerHTML = `<div class="error-text">${esc(String(error))}</div>`
-    }
-  }
-  refresh()
-  const show = (html) => { el.querySelector('#ag-result').innerHTML = html }
-  el.querySelector('#ag-run').onclick = async () => {
-    const keyword = el.querySelector('#ag-keyword').value.trim()
-    if (!keyword) return
-    const box = el.querySelector('#ag-result')
-    box.innerHTML = `<div class="card"><h3>检索过程</h3><div class="loading">开始检索…</div></div>`
-    try {
-      const data = await api('/api/agent/log-search', { method: 'POST', body: JSON.stringify({ env: state.env, instance: el.querySelector('#ag-instance').value, keyword }) })
-      const steps = data.steps.map((s, i) => `<div>${esc(s.step)}：${esc(s.detail)} <span class="muted">(${esc(s.cost)})</span></div>`).join('\n')
-      show(card('检索过程', `<pre class="log">${steps}</pre>`) + runReport(data.report))
-      refresh()
-    } catch (error) {
-      show(`<div class="error-text">${esc(String(error))}</div>`)
-    }
-  }
-  const runReport = (r) => card('异常链摘要', `
-    <div class="error-text" style="padding:0 0 8px">${esc(r.exception)}</div>
-    <div class="muted" style="margin-bottom:8px">错误类型：<span class="tag red">${esc(r.errorType)}</span> · 命中 ${r.hits} 处 · ${esc(r.logSize)} · 耗时 ${r.costMs}ms</div>
-    ${r.relatedErrors?.length ? `<div style="margin:6px 0"><div class="muted">相关错误链：</div>${r.relatedErrors.map((e) => `<div class="cite">${esc(e)}</div>`).join('')}</div>` : ''}
-    ${r.codeSnippet?.length ? `<pre class="log">${r.codeSnippet.map((line) => esc(line)).join('\n')}</pre>` : ''}
-    <div style="margin-top:8px"><span class="muted">处理建议：</span>${esc(r.suggestion)}</div>`)
-}
 
 /* ------------------------------- 数据字典 ------------------------------ */
 
 PAGES.dictionary = async (el) => {
-  const render = async (q = '', category = '') => {
-    try {
-      const data = await api(`/api/dictionary/entries?q=${encodeURIComponent(q)}&category=${encodeURIComponent(category)}`)
-      el.querySelector('#dict-total').textContent = `共 ${data.total} 条`
-      el.querySelector('#dict-body').innerHTML = table(['中文名', '英文名', '编码', '属性值', '分类', '数据来源', '版本'], data.entries.map((e) => [e.cn, e.en, e.code, e.value, e.category, e.source, e.version])) || `<div class="empty">无结果</div>`
-    } catch (error) {
-      el.querySelector('#dict-body').innerHTML = `<div class="error-text">${esc(String(error))}</div>`
-    }
+  // 本地化数据字典：内置种子 + 文档导入 + 查询 + 状态管理（离线可用）
+  const LS_KEY = 'wt-dict-entries'
+  const LS_META = 'wt-dict-meta'
+
+  const SEED = [
+    { category: '票据', cn: '票据类型', en: 'Bill Type', code: 'BILL_TYPE', value: '银票' },
+    { category: '票据', cn: '票据类型', en: 'Bill Type', code: 'BILL_TYPE', value: '商票' },
+    { category: '票据', cn: '票据状态', en: 'Bill Status', code: 'BILL_ST', value: '出票已登记' },
+    { category: '票据', cn: '票据状态', en: 'Bill Status', code: 'BILL_ST', value: '已承兑' },
+    { category: '票据', cn: '票据状态', en: 'Bill Status', code: 'BILL_ST', value: '已贴现' },
+    { category: '票据', cn: '票据状态', en: 'Bill Status', code: 'BILL_ST', value: '已结清' },
+    { category: '票据', cn: '承兑方式', en: 'Acceptor Kind', code: 'ACPT_KIND', value: '银行承兑' },
+    { category: '票据', cn: '承兑方式', en: 'Acceptor Kind', code: 'ACPT_KIND', value: '商业承兑' },
+    { category: '票据', cn: '贴现方式', en: 'Discount Mode', code: 'DISC_MODE', value: '直贴' },
+    { category: '票据', cn: '贴现方式', en: 'Discount Mode', code: 'DISC_MODE', value: '转贴现' },
+    { category: '客户', cn: '客户类型', en: 'Customer Type', code: 'CUST_TYPE', value: '企业客户' },
+    { category: '客户', cn: '客户类型', en: 'Customer Type', code: 'CUST_TYPE', value: '个人客户' },
+    { category: '客户', cn: '客户状态', en: 'Customer Status', code: 'CUST_ST', value: '正常' },
+    { category: '结算', cn: '币种', en: 'Currency', code: 'CUR', value: '人民币' },
+    { category: '结算', cn: '结算方式', en: 'Settle Mode', code: 'SETTLE_MODE', value: '银企直连' },
+    { category: '系统', cn: '数据状态', en: 'Data Status', code: 'DATA_ST', value: '有效' },
+    { category: '系统', cn: '数据状态', en: 'Data Status', code: 'DATA_ST', value: '停用' },
+  ]
+  const norm = (x) => String(x ?? '').trim()
+  const load = () => {
+    try { const raw = JSON.parse(localStorage.getItem(LS_KEY)); if (Array.isArray(raw)) return raw } catch (e) { /* ignore */ }
+    const seed = SEED.map((x, i) => ({ id: 'b' + (i + 1), source: '内置', active: true, updatedAt: 0, ...x }))
+    try { localStorage.setItem(LS_KEY, JSON.stringify(seed)) } catch (e) { /* ignore */ }
+    return seed
   }
+  const save = (list) => { try { localStorage.setItem(LS_KEY, JSON.stringify(list)) } catch (e) { /* ignore */ } }
+  const metaLoad = () => { try { return JSON.parse(localStorage.getItem(LS_META)) || null } catch (e) { return null } }
+  const metaSave = (m) => { try { localStorage.setItem(LS_META, JSON.stringify(m)) } catch (e) { /* ignore */ } }
+
+  let entries = load()
+  let meta = metaLoad()
+  let filterCat = '全部'
+  let filterStatus = '全部'
+  let kw = ''
+
   el.innerHTML = `
-    <div class="section-title">数据字典工具 <span class="muted">一键导入（deepseek-harness 解析）· 中文名/英文名/编码/简述检索</span></div>
-    <div class="card">
-      <div class="row">
-        <input type="text" id="dict-q" placeholder="输入 中文名 / 英文名 / 编码，例如：转账状态" style="flex:1">
-        <button class="btn primary" id="dict-search">查询</button>
-        <button class="btn" id="dict-import-toggle">一键导入</button>
-        <span class="muted" id="dict-total"></span>
+    <div class="section-title">数据字典 <span class="muted">导入文档 · 查询 · 字典状态</span></div>
+
+    <div class="card" style="margin-bottom:12px">
+      <h3>📊 字典状态 <span class="muted" id="dd-meta"></span></h3>
+      <div class="row" id="dd-stats" style="margin-bottom:6px"></div>
+      <div class="row" style="gap:6px;flex-wrap:wrap" id="dd-cats"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="row" style="margin-bottom:8px;gap:6px;flex-wrap:wrap">
+        <input type="text" id="dict-q" placeholder="🔍 输入 中文名 / 英文名 / 编码 / 属性值 查询" style="flex:1;min-width:200px">
+        <select id="dd-status" style="width:auto">
+          <option value="全部">状态：全部</option><option value="启用">状态：启用</option><option value="停用">状态：停用</option>
+        </select>
+        <button class="btn" id="dict-import-toggle">⬆ 导入文档</button>
       </div>
-      <div id="dict-import" style="display:none;margin-top:10px">
-        <textarea id="dict-payload" rows="3" placeholder="每行一条：中文名,英文名,编码,属性值,分类"></textarea>
-        <div class="row" style="margin-top:8px"><button class="btn" id="dict-do-import">解析导入</button><span class="muted" id="dict-import-note"></span></div>
+      <div id="dict-import" style="display:none;margin-top:8px">
+        <div class="muted" style="line-height:1.8;margin-bottom:6px">导入格式（.txt / .json / .csv）：每行 <b>中文名 | 英文名 | 编码 | 属性值 | 分类</b>；或 JSON 数组 [{"cn":"…","en":"…","code":"…","value":"…","category":"…"}]</div>
+        <textarea id="dict-payload" rows="4" placeholder="票据状态 | Bill Status | BILL_ST | 已承兑 | 票据&#10;…或直接拖/选文件："></textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn primary" id="dict-do-import">导入解析</button>
+          <button class="btn" id="dict-file-btn">📁 选择文件</button>
+          <input type="file" id="dict-file" accept=".txt,.json,.csv,text/plain,application/json" hidden>
+          <span class="muted" id="dict-import-note"></span>
+        </div>
       </div>
     </div>
-    <div class="card"><div id="dict-body"><div class="loading">加载中…</div></div></div>`
-  el.querySelector('#dict-search').onclick = () => render(el.querySelector('#dict-q').value)
-  el.querySelector('#dict-import-toggle').onclick = () => { const box = el.querySelector('#dict-import'); box.style.display = box.style.display === 'none' ? 'block' : 'none' }
-  el.querySelector('#dict-do-import').onclick = async () => {
-    try {
-      const data = await api('/api/dictionary/import', { method: 'POST', body: JSON.stringify({ payload: el.querySelector('#dict-payload').value }) })
-      el.querySelector('#dict-import-note').textContent = `导入成功 ${data.imported} 条`
-      render('')
-    } catch (error) {
-      el.querySelector('#dict-import-note').textContent = `导入失败：${String(error)}`
+
+    <div class="card">
+      <h3>字典条目 <span class="muted" id="dict-total"></span></h3>
+      <div id="dict-body"></div>
+    </div>`
+
+  const $id = (id) => el.querySelector('#' + id)
+
+  const render = () => {
+    const list = entries.filter((e) => {
+      if (filterCat !== '全部' && e.category !== filterCat) return false
+      if (filterStatus === '启用' && !e.active) return false
+      if (filterStatus === '停用' && e.active) return false
+      if (kw) {
+        const hay = `${e.cn} ${e.en} ${e.code} ${e.value} ${e.category}`.toLowerCase()
+        if (!hay.includes(kw.toLowerCase())) return false
+      }
+      return true
+    })
+    const activeTotal = entries.filter((e) => e.active).length
+    const catSet = [...new Set(entries.map((e) => e.category))]
+    const stat = {
+      total: entries.length,
+      builtin: entries.filter((e) => e.source === '内置').length,
+      imported: entries.filter((e) => e.source === '导入').length,
+      enabled: activeTotal,
     }
+    $id('dd-stats').innerHTML = [
+      `<span class="stat-chip">总条目 <b>${stat.total}</b></span>`,
+      `<span class="stat-chip">内置 <b>${stat.builtin}</b></span>`,
+      `<span class="stat-chip">已导入 <b style="color:var(--accent)">${stat.imported}</b></span>`,
+      `<span class="stat-chip">启用 <b style="color:var(--green)">${stat.enabled}</b></span>`,
+      `<span class="stat-chip">停用 <b style="color:var(--red)">${stat.total - stat.enabled}</b></span>`,
+    ].join('')
+    $id('dd-meta').textContent = meta ? `最近导入：${meta.name || '文档'} · ${new Date(meta.time).toLocaleString('zh-CN', { hour12: false })}（共 ${meta.count} 条）` : '暂无导入记录'
+    $id('dd-cats').innerHTML = ['全部', ...catSet].map((c) => {
+      const n = c === '全部' ? entries.length : entries.filter((e) => e.category === c).length
+      return `<button class="btn sm tag-chip ${filterCat === c ? 'active' : ''}" data-c="${c}">${c} (${n})</button>`
+    }).join('')
+    $id('dict-total').textContent = `显示 ${list.length} / ${entries.length} 条`
+    $id('dict-body').innerHTML = list.length
+      ? list.map((e) => {
+          const badge = e.source === '内置' ? '<span class="tag blue">内置</span>' : '<span class="tag green">已导入</span>'
+          const stBadge = e.active ? '<span class="tag" style="background:#e8f7ee;color:var(--green)">启用</span>' : '<span class="tag" style="background:#fdeaea;color:var(--red)">停用</span>'
+          const act = e.source === '导入' ? `
+            <button class="btn sm" data-id="${e.id}" data-act="toggle">${e.active ? '停用' : '启用'}</button>
+            <button class="btn sm danger" data-id="${e.id}" data-act="del">✕</button>` : ''
+          return `
+          <div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">
+            <div style="min-width:280px">
+              <div><b>${esc(e.cn)}</b>${e.en ? ' <span class="muted">' + esc(e.en) + '</span>' : ''} ${badge} ${stBadge} <span class="nt-cat">${esc(e.category)}</span></div>
+              <div class="muted" style="font-size:12px">${esc(e.code)}${e.value ? ' = ' + esc(e.value) : ''}${e.updatedAt ? ' · ' + new Date(e.updatedAt).toLocaleString('zh-CN', { hour12: false }) : ''}</div>
+            </div>
+            <div class="row" style="gap:4px">${act}</div>
+          </div>`
+        }).join('')
+      : '<div class="empty">无匹配字典条目</div>'
+
+    $id('dict-body').querySelectorAll('[data-act]').forEach((b) => {
+      b.onclick = () => {
+        const e = entries.find((x) => x.id === b.dataset.id)
+        if (!e) return
+        if (b.dataset.act === 'toggle') e.active = !e.active
+        else entries = entries.filter((x) => x.id !== e.id)
+        e.updatedAt = Date.now()
+        save(entries)
+        render()
+      }
+    })
+    $id('dd-cats').querySelectorAll('[data-c]').forEach((b) => {
+      b.onclick = () => { filterCat = b.dataset.c; render() }
+    })
   }
+
+  $id('dict-q').addEventListener('input', (e) => { kw = e.target.value; render() })
+  $id('dd-status').addEventListener('change', (e) => { filterStatus = e.target.value; render() })
+
+  const parsePayload = (text) => {
+    const raw = String(text).trim()
+    if (!raw) return { added: [], skipped: 0, error: '' }
+    // JSON 数组
+    if (raw.startsWith('[')) {
+      try {
+        const arr = JSON.parse(raw)
+        if (!Array.isArray(arr)) throw new Error('顶层应为数组')
+        return arr.map((x) => ({ category: norm(x.category) || '其他', cn: norm(x.cn), en: norm(x.en), code: norm(x.code), value: norm(x.value) }))
+      } catch (e) { return { added: [], skipped: 0, error: 'JSON 解析失败：' + e.message } }
+    }
+    return raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const parts = line.split(/[|,\t]+/).map(norm)
+      return { cn: parts[0] || '', en: parts[1] || '', code: parts[2] || '', value: parts[3] || '', category: parts[4] || '其他' }
+    })
+  }
+
+  const doImport = (rawDocs, name) => {
+    let added = 0, skipped = 0, error = ''
+    const existing = new Set(entries.map((e) => `${e.cn}|${e.code}|${e.value}`))
+    for (const doc of rawDocs) {
+      if (typeof doc === 'string') { error = doc; return { added, skipped, error } }
+      if (!doc.cn || !doc.code) { skipped += 1; continue }
+      const key = `${doc.cn}|${doc.code}|${doc.value}`
+      if (existing.has(key)) { skipped += 1; continue }
+      existing.add(key)
+      entries.push({ id: 'i' + Date.now() + '-' + added, source: '导入', active: true, updatedAt: Date.now(), ...doc })
+      added += 1
+    }
+    if (added) {
+      meta = { name, time: Date.now(), count: added }
+      metaSave(meta)
+      save(entries)
+    }
+    return { added, skipped, error }
+  }
+
+  $id('dict-import-toggle').onclick = () => { const box = $id('dict-import'); box.style.display = box.style.display === 'none' ? 'block' : 'none' }
+  $id('dict-do-import').onclick = () => {
+    const docs = parsePayload($id('dict-payload').value)
+    if (docs.error) { $id('dict-import-note').textContent = docs.error; return }
+    const r = doImport(docs, '粘贴导入')
+    $id('dict-import-note').textContent = r.error || `✓ 新增 ${r.added} 条，跳过 ${r.skipped} 条重复`
+    if (r.added) { $id('dict-payload').value = ''; render() }
+  }
+  $id('dict-file-btn').onclick = () => $id('dict-file').click()
+  $id('dict-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      const text = await readFileAsText(file)
+      const docs = parsePayload(text)
+      if (docs.error) { $id('dict-import-note').textContent = docs.error; return }
+      const r = doImport(docs, file.name)
+      $id('dict-import-note').textContent = r.error || `✓ 文件「${file.name}」新增 ${r.added} 条，跳过 ${r.skipped} 条重复`
+      if (r.added) render()
+    } catch (err) {
+      $id('dict-import-note').textContent = '读取文件失败：' + String(err && err.message || err)
+    }
+  })
+
   render()
 }
 
-/* -------------------------------- 元数据管理 --------------------------- */
 
-PAGES.metadata = async (el) => {
-  el.innerHTML = `
-    <div class="section-title">元数据管理 <span class="muted">环境管理 · 表清单 · 表结构 · 比对 · 版本</span></div>
-    <div class="row" style="margin-bottom:12px">
-      ${['tables', 'compare', 'versions', 'alter'].map((t) => `<button class="btn" data-mtab="${t}">${({ tables: '表清单', compare: '表结构比对', versions: '版本历史', alter: '结构变更' })[t]}</button>`).join('')}
-    </div>
-    <div id="md-body"><div class="loading">加载中…</div></div>`
-  const apiUrl = (t) => `/api/metadata/${t}`
-  const renderTab = async (tab) => {
-    const box = el.querySelector('#md-body')
-    box.innerHTML = `<div class="loading">加载中…</div>`
-    try {
-      if (tab === 'tables') {
-        const list = await api(`${apiUrl('tables')}?env=${state.env}`)
-        box.innerHTML = `<div class="card"><h3>表清单 · ${state.env} <span class="muted">（共 ${list.length} 张演示表）</span></h3>
-          ${table(['表名', '中文名', '业务域', '字段数'], list.map((t) => [t.name, t.cn, t.domain, t.fieldCount]))}</div>
-          <div id="md-table-detail"></div>`
-        box.querySelectorAll('#md-body table tbody tr').forEach((tr) => {
-          tr.onclick = async () => {
-            const name = tr.children[0].textContent
-            try {
-              const detail = await api(`${apiUrl('table')}?env=${state.env}&name=${encodeURIComponent(name)}`)
-              box.querySelector('#md-table-detail').innerHTML = card(`表结构：${detail.name}（${detail.columns.length} 列）`, table(['序号', '字段名', '字段中文名', '类型', '主键', '注释'], detail.columns.map((col, i) => [i + 1, col.name, col.cn, col.type, col.pk ? '是' : '', col.comment ?? ''])))
-            } catch (error) {
-              box.querySelector('#md-table-detail').innerHTML = `<div class="error-text">${esc(String(error))}</div>`
-            }
-          }
-        })
-      } else if (tab === 'compare') {
-        box.innerHTML = `<div class="card"><h3>表结构比对</h3>
-          <div class="row">
-            <select id="cmp-a">${ENV_OPTIONS.map(([value, label], i) => `<option value="${value}" ${i === 0 ? 'selected' : ''}>${label}</option>`).join('')}</select>
-            <span class="muted">→</span>
-            <select id="cmp-b">${ENV_OPTIONS.map(([value, label], i) => `<option value="${value}" ${i === 1 ? 'selected' : ''}>${label}</option>`).join('')}</select>
-            <select id="cmp-table">${(await api(`${apiUrl('tables')}?env=SIT`)).map((t) => `<option>${t.name}</option>`).join('')}</select>
-            <button class="btn primary" id="cmp-run">开始比对</button>
-          </div></div><div id="cmp-result"></div>`
-        el.querySelector('#cmp-run').onclick = async () => {
-          const data = await api(`${apiUrl('compare')}?a=${el.querySelector('#cmp-a').value}&b=${el.querySelector('#cmp-b').value}&name=${el.querySelector('#cmp-table').value}`)
-          el.querySelector('#cmp-result').innerHTML = `
-            <div class="card"><h3>比对结果：${data.table}</h3>
-            <div class="muted" style="margin-bottom:8px">A=${data.a}（共 ${data.aCount} 列） · B=${data.b}（共 ${data.bCount} 列）</div>
-            ${card('A 独有字段', data.aOnly.length ? table(['字段名', '中文名', '类型'], data.aOnly.map((col) => [col.name, col.cn, col.type])) : '<div class="empty">无</div>')}
-            ${card('B 独有字段', data.bOnly.length ? table(['字段名', '中文名', '类型'], data.bOnly.map((col) => [col.name, col.cn, col.type])) : '<div class="empty">无</div>')}
-            ${card('类型不一致', data.typeDiffs.length ? table(['字段名', 'A 类型', 'B 类型'], data.typeDiffs.map((col) => [col.name, col.type, (data.aOnly.find((x) => x.name === col.name) ?? col).type])) : '<div class="empty">无</div>')}
-          </div>`
-        }
-      } else if (tab === 'versions') {
-        const versions = await api(`${apiUrl('versions')}?env=${state.env}`)
-        box.innerHTML = `<div class="card"><h3>版本历史 · ${state.env}</h3>${versions.map((v) => `
-          <div style="padding:8px 0;border-bottom:1px solid var(--border)">
-            <div class="row"><span class="tag blue">${esc(v.version)}</span><span class="muted">${esc(v.time)}</span><span class="muted">${v.tables} 表 / ${v.fields} 字段</span><span class="tag green">变更 ${v.changed.length}</span></div>
-            ${v.changed.map((c) => `<div class="cite">${esc(c.table)} · ${esc(c.kind)}：<b>${esc(c.field)}</b> ${c.from ? `${esc(c.from)} → ` : ''}${esc(c.to ?? '')}</div>`).join('')}
-          </div>`).join('')}</div>`
-      } else if (tab === 'alter') {
-        box.innerHTML = `<div class="card"><h3>结构变更（保留数据）</h3>
-          <div class="row">
-            <select id="alt-table">${(await api(`${apiUrl('tables')}?env=SIT`)).map((t) => `<option>${t.name}</option>`).join('')}</select>
-            字段名 <input id="alt-field" style="width:180px"> 类型 <input id="alt-type" value="VARCHAR2(32)" style="width:140px"> 中文注释 <input id="alt-cn" style="width:160px">
-            <button class="btn" id="alt-add">添加字段</button>
+/* -------------------------------- 健康提醒 ------------------------------ */
+
+// 健康提醒（参考喝水提醒 / 小日常 / Habitify：多时段自定义、打卡与连续、统计、通知+铃声）
+const REM_KEY = 'wt-rem-cfg'
+const REM_LOG = 'wt-rem-log'
+function remDef() {
+  return {
+    water: { label: '喝水', icon: '💧', on: true, times: ['09:00', '10:30', '12:30', '14:00', '16:00', '18:00', '20:00', '22:00'] },
+    move: { label: '运动', icon: '🏃', on: true, times: ['10:00', '15:30', '19:30'] },
+    rest: { label: '休息', icon: '😴', on: true, times: ['11:00', '15:00', '17:30', '21:30'] },
+  }
+}
+function remLoadCfg() { try { const c = JSON.parse(localStorage.getItem(REM_KEY)); if (c && c.water && c.move && c.rest) return c } catch (e) { /* ignore */ } const d = remDef(); remSaveCfg(d); return d }
+function remSaveCfg(c) { try { localStorage.setItem(REM_KEY, JSON.stringify(c)) } catch (e) { /* ignore */ } }
+function remLoadLog() { try { const l = JSON.parse(localStorage.getItem(REM_LOG)); return l && typeof l === 'object' ? l : {} } catch (e) { return {} } }
+function remSaveLog(l) { try { localStorage.setItem(REM_LOG, JSON.stringify(l)) } catch (e) { /* ignore */ } }
+function remNow() { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return { date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`, time: `${p(d.getHours())}:${p(d.getMinutes())}` } }
+
+let remRenderHook = null
+let remCfg = remLoadCfg()
+let remLog = remLoadLog()
+const remAudio = () => {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext
+    const ctx = remAudio.ctx || (remAudio.ctx = AC ? new AC() : null)
+    if (!ctx) return
+    if (ctx.state === 'suspended') void ctx.resume()
+    const o = ctx.createOscillator()
+    const g = ctx.createGain()
+    o.connect(g); g.connect(ctx.destination)
+    const t = ctx.currentTime
+    o.type = 'sine'
+    o.frequency.setValueAtTime(880, t); o.frequency.setValueAtTime(1100, t + 0.12)
+    g.gain.setValueAtTime(0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.5)
+    o.start(t); o.stop(t + 0.5)
+  } catch (e) { /* ignore */ }
+}
+const remToast = (text) => {
+  try {
+    const node = document.createElement('div')
+    node.className = 'rem-toast'
+    node.textContent = text
+    document.body.appendChild(node)
+    setTimeout(() => { if (node.parentNode) node.parentNode.removeChild(node) }, 4200)
+  } catch (e) { /* ignore */ }
+}
+const remLogPush = (kind, source) => {
+  const c = remCfg[kind]
+  const now = remNow()
+  const key = `${now.date} ${now.time} ${kind}`
+  if (remLog[key]) return false
+  remLog[key] = { kind, label: c.label, icon: c.icon, source: source || '自动', ts: Date.now() }
+  remSaveLog(remLog)
+  return true
+}
+function remFire(kind, source) {
+  const c = remCfg[kind]
+  if (!c) return
+  const ok = remLogPush(kind, source)
+  if (!ok) return
+  const msg = `${c.icon} ${c.label}提醒：到点了，${c.label === '喝水' ? '喝杯水吧' : c.label === '运动' ? '起来活动一下吧' : '休息一下，放松眼睛与肩颈'}`
+  try {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      new Notification(`${c.label}提醒`, { body: msg })
+    }
+  } catch (e) { /* ignore */ }
+  remAudio()
+  remToast(`${c.label}提醒 · ${remNow().time}`)
+  if (remRenderHook) remRenderHook()
+}
+function remTick() {
+  if (document.hidden) return
+  const now = remNow()
+  for (const kind of Object.keys(remCfg)) {
+    const c = remCfg[kind]
+    if (!c.on || !c.times.includes(now.time)) continue
+    remFire(kind, '自动')
+  }
+}
+setInterval(remTick, 15000)
+
+function remStreak() {
+  const p = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  let n = 0
+  const base = new Date()
+  for (;;) {
+    const keyDate = p(new Date(base.getTime() - n * 86400000))
+    const hit = Object.keys(remLog).some((k) => k.startsWith(keyDate))
+    if (hit) n += 1
+    else break
+  }
+  return n
+}
+
+PAGES.health = (el) => {
+  const today = remNow().date
+  const render = () => {
+    const logsToday = Object.entries(remLog).filter(([k]) => k.startsWith(today)).map(([, v]) => v)
+    const byKind = {}
+    for (const v of logsToday) byKind[v.kind] = (byKind[v.kind] || 0) + 1
+    const order = ['water', 'move', 'rest']
+
+    el.innerHTML = `
+      <div class="section-title">健康提醒 <span class="muted">到点提醒喝水 / 运动 / 休息 · 可自定义时间</span></div>
+
+      <div class="card" style="margin-bottom:12px">
+        <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div class="row" style="gap:8px;flex-wrap:wrap">
+            <span class="stat-chip">今日提醒 <b>${logsToday.length}</b> 次</span>
+            ${order.map((k) => `<span class="stat-chip">${remCfg[k].icon} ${remCfg[k].label} <b>${byKind[k] || 0}</b></span>`).join('')}
+            <span class="stat-chip">连续打卡 <b style="color:var(--green)">${remStreak()}</b> 天</span>
           </div>
-          <pre class="log" id="alt-sql" style="margin-top:10px">（点击「生成 SQL」）</pre>
-          <div class="row" style="margin-top:8px"><button class="btn primary" id="alt-gen">生成 SQL</button><span class="muted">Mock：真实环境将执行到数据库</span></div></div>`
-        el.querySelector('#alt-gen').onclick = async () => {
-          const data = await api(`${apiUrl('alter-sql')}`, { method: 'POST', body: JSON.stringify({ table: el.querySelector('#alt-table').value, changes: [{ kind: 'add', field: el.querySelector('#alt-field').value, cn: el.querySelector('#alt-cn').value, type: el.querySelector('#alt-type').value }] }) })
-          el.querySelector('#alt-sql').textContent = data.sql.join('\n') || '（无变更）'
-        }
+          <div class="row" style="gap:6px">
+            <button class="btn" id="rem-notify">🔔 开启系统通知</button>
+            <span class="muted" id="rem-notify-state">${typeof Notification !== 'undefined' && Notification.permission === 'granted' ? '系统通知：已允许' : '系统通知：未开启'}</span>
+          </div>
+        </div>
+        <div class="muted" style="margin-top:6px">页面打开时到点会响铃提示；开启系统通知后，即使不在本页也会收到系统通知。</div>
+      </div>
+
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr));align-items:start">
+        ${order.map((kind) => {
+          const c = remCfg[kind]
+          const next = c.times.filter((t) => t >= remNow().time).sort()[0] || c.times[0] || '—'
+          return `
+          <div class="card" style="margin-bottom:0">
+            <div class="row" style="justify-content:space-between;align-items:center">
+              <h3 style="margin:0">${c.icon} ${c.label}提醒</h3>
+              <label class="rem-switch"><input type="checkbox" data-k="${kind}" ${c.on ? 'checked' : ''}><span></span></label>
+            </div>
+            <div class="row" style="flex-wrap:wrap;gap:6px;margin:8px 0" data-times="${kind}">
+              ${c.times.length ? c.times.map((t) => `<span class="rem-chip">${t} <b data-del="${kind}|${t}">✕</b></span>`).join('') : '<span class="muted">未设置时间</span>'}
+            </div>
+            <div class="row" style="gap:6px;flex-wrap:wrap">
+              <input type="time" id="rem-in-${kind}">
+              <button class="btn sm" data-add="${kind}">添加</button>
+              <button class="btn sm" data-now="${kind}" title="立即触发一次提醒/打卡">现在</button>
+            </div>
+            <div class="muted" style="font-size:12px;margin-top:6px">下次：${next}</div>
+          </div>`
+        }).join('')}
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3>📖 今日提醒记录</h3>
+        ${logsToday.length ? logsToday.sort((a, b) => a.ts - b.ts).map((v) => `<div class="row" style="justify-content:space-between;padding:6px 2px;border-bottom:1px solid var(--border)"><span>${v.icon} ${v.label}</span><span class="muted">${new Date(v.ts).toLocaleTimeString('zh-CN', { hour12: false })} · ${v.source === '手动' ? '手动打卡' : '自动提醒'}</span></div>`).join('') : '<div class="empty">今天还没有提醒/打卡记录</div>'}
+      </div>`
+
+    // 开关
+    el.querySelectorAll('input[data-k]').forEach((sw) => {
+      sw.onchange = () => { remCfg[sw.dataset.k].on = sw.checked; remSaveCfg(remCfg) }
+    })
+    // 添加 / 删除 / 立即
+    el.querySelectorAll('[data-add]').forEach((b) => {
+      b.onclick = () => {
+        const kind = b.dataset.add
+        const val = el.querySelector('#rem-in-' + kind).value
+        if (!val) return
+        if (!remCfg[kind].times.includes(val)) { remCfg[kind].times.push(val); remCfg[kind].times.sort(); remSaveCfg(remCfg) }
+        render()
       }
-    } catch (error) {
-      box.innerHTML = `<div class="error-text">${esc(String(error))}</div>`
+    })
+    el.querySelectorAll('[data-del]').forEach((b) => {
+      b.onclick = () => {
+        const [kind, t] = b.dataset.del.split('|')
+        remCfg[kind].times = remCfg[kind].times.filter((x) => x !== t)
+        remSaveCfg(remCfg)
+        render()
+      }
+    })
+    el.querySelectorAll('[data-now]').forEach((b) => {
+      b.onclick = () => remFire(b.dataset.now, '手动')
+    })
+    // 系统通知
+    const notifyBtn = el.querySelector('#rem-notify')
+    notifyBtn.onclick = async () => {
+      if (typeof Notification === 'undefined') {
+        el.querySelector('#rem-notify-state').textContent = '当前浏览器不支持系统通知'
+        return
+      }
+      const st = await Notification.requestPermission()
+      el.querySelector('#rem-notify-state').textContent = st === 'granted' ? '系统通知：已允许' : (st === 'denied' ? '系统通知：已拒绝（请在浏览器设置中允许）' : '系统通知：未开启')
     }
   }
-  el.querySelectorAll('[data-mtab]').forEach((btn) => { btn.onclick = () => renderTab(btn.dataset.mtab) })
-  renderTab('tables')
+
+  remRenderHook = () => { if (el.isConnected) render() }
+  render()
 }
 
 /* -------------------------------- 记事本（印象笔记风） ------------------ */
@@ -1202,6 +1590,8 @@ const NOTE_DB = 'wangtie-os-notes'
 const NOTE_STORE = 'items'
 const NOTE_DEFAULT_NB = ['默认笔记本', '开发速记', '票据业务', '会计']
 let notesSeq = 0
+// 会话级记忆：切换模块后再回来，仍停留原笔记本/选中笔记/模式
+const NOTE_SESSION = { scope: 'all', nb: null, q: '', tag: '', sel: null, mode: 'edit' }
 
 function openNotesDb() {
   return new Promise((resolve, reject) => {
@@ -1350,11 +1740,12 @@ PAGES.notes = async (el) => {
 
   // 视图状态（模块级变量，保留在本次会话内多次进出）
   const V = {
-    scope: 'all',         // all | trash | nb
-    nb: null,             // 当前笔记本名（scope=nb 时）
-    q: '', tag: '',
-    sel: null,            // 选中笔记 id
-    mode: 'edit',         // edit | preview
+    scope: NOTE_SESSION.scope,
+    nb: NOTE_SESSION.nb,
+    q: NOTE_SESSION.q,
+    tag: NOTE_SESSION.tag,
+    sel: NOTE_SESSION.sel,
+    mode: NOTE_SESSION.mode,
     timer: null,
   }
 
@@ -1460,6 +1851,12 @@ PAGES.notes = async (el) => {
   }
 
   // ============ 中间：笔记列表 ============
+    NOTE_SESSION.scope = V.scope
+    NOTE_SESSION.nb = V.nb
+    NOTE_SESSION.q = V.q
+    NOTE_SESSION.tag = V.tag
+    NOTE_SESSION.sel = V.sel
+    NOTE_SESSION.mode = V.mode
   const renderList = () => {
     const kw = V.q.trim().toLowerCase()
     let list = activeNotes()
@@ -1491,6 +1888,12 @@ PAGES.notes = async (el) => {
   }
 
   // ============ 右侧：编辑器 ============
+    NOTE_SESSION.scope = V.scope
+    NOTE_SESSION.nb = V.nb
+    NOTE_SESSION.q = V.q
+    NOTE_SESSION.tag = V.tag
+    NOTE_SESSION.sel = V.sel
+    NOTE_SESSION.mode = V.mode
   const renderEditor = () => {
     const note = current()
     const box = $id('en-editor')
@@ -1522,7 +1925,7 @@ PAGES.notes = async (el) => {
           <button class="tool-tab ${V.mode === 'edit' ? 'active' : ''}" id="en-mode-edit">编辑</button>
           <button class="tool-tab ${V.mode === 'preview' ? 'active' : ''}" id="en-mode-preview">预览</button>
         </div>
-        ${note.deletedAt == null ? `
+        ${note.deletedAt == null && V.mode === 'edit' ? `
         <span class="row" style="gap:4px;flex:1">
           <button class="btn sm" data-md="h">H</button>
           <button class="btn sm" data-md="b">B</button>
@@ -1806,6 +2209,165 @@ function hslToRgb(h, s, l) {
   return [clampByte(fn(h + 1 / 3) * 255), clampByte(fn(h) * 255), clampByte(fn(h - 1 / 3) * 255)]
 }
 
+
+// ---------- 压缩工具底层（ZIP / 分卷，纯前端） ----------
+function crc32ForBytes(bytes) {
+  const table = new Uint32Array(256)
+  for (let n = 0; n < 256; n++) {
+    let c = n
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    table[n] = c >>> 0
+  }
+  let crc = 0xffffffff
+  for (let i = 0; i < bytes.length; i++) crc = table[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8)
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+async function deflateRawBytes(data) {
+  if (typeof CompressionStream === 'undefined') throw new Error('当前浏览器不支持压缩（需新版 Chrome / Safari）')
+  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream('deflate-raw'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}
+
+function dosDateTime() {
+  const d = new Date()
+  const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()
+  const time = (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2)
+  return { date: date & 0xffff, time: time & 0xffff }
+}
+
+async function buildZipBytes(entries) {
+  // entries: [{ name: string, data: Uint8Array }]
+  const items = []
+  let localTotal = 0
+  let centralTotal = 0
+  for (const e of entries) {
+    const nameBytes = new TextEncoder().encode(e.name)
+    const raw = e.data
+    const deflated = await deflateRawBytes(raw)
+    const crc = crc32ForBytes(raw)
+    items.push({ nameBytes, raw, deflated, crc, method: 8, localSize: 30 + nameBytes.length + deflated.length, centralSize: 46 + nameBytes.length, offset: 0 })
+    localTotal += 30 + nameBytes.length + deflated.length
+    centralTotal += 46 + nameBytes.length
+  }
+  const total = localTotal + centralTotal + 22
+  const buf = new ArrayBuffer(total)
+  const view = new DataView(buf)
+  const u8 = new Uint8Array(buf)
+  let pos = 0
+  const putU16 = (v) => { view.setUint16(pos, v, true); pos += 2 }
+  const putU32 = (v) => { view.setUint32(pos, v, true); pos += 4 }
+  const putBytes = (b) => { u8.set(b, pos); pos += b.length }
+
+  let offset = 0
+  for (const it of items) {
+    it.offset = offset
+    putU32(0x04034b50); putU16(20); putU16(0x0800); putU16(it.method)
+    const dt = dosDateTime()
+    putU16(dt.time); putU16(dt.date)
+    putU32(it.crc); putU32(it.deflated.length); putU32(it.raw.length)
+    putU16(it.nameBytes.length); putU16(0)
+    putBytes(it.nameBytes); putBytes(it.deflated)
+    offset += it.localSize
+  }
+  const centralStart = pos
+  for (const it of items) {
+    putU32(0x02014b50); putU16(20); putU16(20); putU16(0x0800); putU16(it.method)
+    const dt = dosDateTime()
+    putU16(dt.time); putU16(dt.date)
+    putU32(it.crc); putU32(it.deflated.length); putU32(it.raw.length)
+    putU16(it.nameBytes.length); putU16(0); putU16(0)
+    putU16(0); putU16(0); putU32(0)
+    putU32(it.offset); putBytes(it.nameBytes)
+  }
+  putU32(0x06054b50); putU16(0); putU16(0)
+  putU16(items.length); putU16(items.length)
+  putU32(centralTotal); putU32(centralStart)
+  putU16(0)
+  return u8
+}
+
+function splitBuffer(bytes, partSize) {
+  const parts = []
+  for (let i = 0; i < bytes.length; i += partSize) {
+    parts.push(bytes.subarray(i, Math.min(i + partSize, bytes.length)))
+  }
+  return parts
+}
+
+function joinBuffers(list) {
+  const total = list.reduce((a, b) => a + b.length, 0)
+  const out = new Uint8Array(total)
+  let pos = 0
+  for (const b of list) { out.set(b, pos); pos += b.length }
+  return out
+}
+
+function humanSize(n) {
+  if (n < 1024) return n + ' B'
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
+  return (n / 1024 / 1024).toFixed(2) + ' MB'
+}
+
+async function zipInflateEntry(entry) {
+  if (entry.method === 0) return entry.data
+  if (entry.method === 8) return inflateRawDeflate(entry.data)
+  throw new Error(`不支持的压缩方式 method=${entry.method}`)
+}
+function downloadBytes(filename, bytes, type = 'application/octet-stream') {
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([bytes], { type }))
+  a.download = filename
+  a.click()
+}
+
+// ---------- 代码体检（本地启发式静态检查） ----------
+function ccAnalyze(code, lang) {
+  const mode = (lang || 'js').toLowerCase()
+  const lines = String(code || '').split(/\r?\n/)
+  const blank = lines.map((l) => l.replace(/\s+/g, ' '))
+  const out = []
+  const push = (line, type, msg) => out.push({ line, type, msg })
+  for (let i = 0; i < lines.length; i++) {
+    const t = blank[i]
+    if (/TODO|FIXME|HACK/.test(t)) push(i + 1, 'style', '存在 TODO/FIXME 待办标记')
+    if (/catch\s*\([^)]*\)\s*\{\s*\}/.test(t)) push(i + 1, 'bug', '空的 catch 会静默吞掉错误，建议记录或处理')
+    if (/while\s*\(\s*true\s*\)|for\s*\(\s*;\s*;\s*\)/.test(t)) push(i + 1, 'opt', '死循环风险：while(true)/for(;;) 请确保有可靠的退出条件')
+    if (mode === 'js') {
+      if (/\bvar\s+/.test(t)) push(i + 1, 'style', '建议使用 let/const 代替 var')
+      if (/==/.test(t) && !/===|=>/.test(t)) push(i + 1, 'bug', '使用了 ==，建议改用 === 以避免隐式类型转换')
+      if (/console\.(log|debug|warn|error)\(/.test(t)) push(i + 1, 'style', '发现 console.* 输出（生产前建议移除或按规范保留 error 级）')
+      if (/document\.write\(/.test(t)) push(i + 1, 'bug', 'document.write 会阻塞解析，建议改用 DOM API')
+      if (/\beval\s*\(/.test(t)) push(i + 1, 'bug', 'eval 存在安全风险，请避免')
+      if (/\.innerHTML\s*=/.test(t)) push(i + 1, 'opt', 'innerHTML 赋值前请转义，避免 XSS')
+      if (/async\s+function|async\s+[A-Za-z_$]/.test(t) && !/await/.test(lines.slice(i, i + 5).join(' '))) push(i + 1, 'opt', 'async 函数内未见 await（检查是否遗漏）')
+    }
+    if (mode === 'java') {
+      if (/System\.out\.(print|println)\(|e\.printStackTrace\(|printStackTrace\(\)/.test(t)) push(i + 1, 'style', '发现 System.out / printStackTrace 输出（建议改用日志框架）')
+      if (/==/.test(t) && /".*"/.test(t)) push(i + 1, 'bug', '字符串与字面量用 == 只比较引用，应使用 equals() 比较内容')
+      if (/\bnew\s+String\s*\(\s*"/.test(t)) push(i + 1, 'opt', 'new String("…") 多余，直接用字符串字面量即可')
+      if (/(new\s+(FileInputStream|FileOutputStream|BufferedReader|Connection|Statement|ResultSet|FileReader)|\.createStatement\s*\(|\.getConnection\s*\()/.test(t)) push(i + 1, 'opt', '涉及流/连接资源：确认使用 try-with-resources 或 finally 中正确关闭')
+      if (/catch\s*\(\s*Exception\s+\w+\s*\)/.test(t) && !/log|logger|printStackTrace/.test(lines.slice(i, i + 6).join(' '))) push(i + 1, 'bug', '捕获 Exception 但未见记录/抛出，建议记录日志避免吞错')
+      if (/public\s+static\s+void\s+main/.test(t)) push(i + 1, 'style', 'main 入口方法：建议将业务逻辑拆分到方法/类')
+    }
+    if (/\b(?!var\b)new\s+(?!String\b)/.test(t) && /\bif\b|\bfor\b|\bwhile\b/.test(t)) {
+      // 循环/条件内大量对象创建可能是低效点（弱提示）
+      if (/\bfor\s*\(/.test(t) && /new\s+/.test(t)) push(i + 1, 'opt', '循环内频繁 new 对象可能影响性能，考虑复用或改用 StringBuilder 等')
+    }
+  }
+  // 结构：嵌套峰值
+  let depth = 0, maxD = 0
+  for (let i = 0; i < lines.length; i++) {
+    const open = (blank[i].match(/\{/g) || []).length
+    const close = (blank[i].match(/\}/g) || []).length
+    depth += open - close
+    if (depth > 0) maxD = Math.max(maxD, depth)
+  }
+  if (lines.length > 80) push(1, 'style', '单个代码块行数偏多（' + lines.length + ' 行），建议拆分为方法')
+  if (maxD > 6) push(1, 'opt', '存在深层嵌套（峰值 ' + maxD + ' 层），建议拆分方法提升可读性')
+  return { issues: out, maxDepth: maxD, lines: lines.length, lang: mode }
+}
+
 PAGES.devtools = (el) => {
   const TOOL_TABS = [
     ['json', 'JSON'],
@@ -1813,19 +2375,22 @@ PAGES.devtools = (el) => {
     ['url', 'URL 编解码'],
     ['ts', '时间戳'],
     ['text', '文本统计'],
+    ['case', '大小写转换'],
     ['hash', '哈希'],
     ['radix', '进制转换'],
     ['regex', '正则测试'],
     ['color', '颜色转换'],
     ['uuid', 'UUID 生成'],
+    ['zip', '压缩工具'],
+    ['code', '代码体检'],
   ]
-  let active = 'json'
+  let active = (state.devtool && TOOL_TABS.some(([id]) => id === state.devtool)) ? state.devtool : 'json'
 
   const sampleJson = {
-    id: 'WLC1779977345791',
+    id: 'SCB202609050001',
     name: '王铁',
-    role: '开发者',
-    tags: ['票据', 'DSH'],
+    role: '票据平台开发者',
+    tags: ['票据', '会计', 'DSH'],
     config: { env: 'SIT', debug: false },
   }
 
@@ -1886,6 +2451,25 @@ PAGES.devtools = (el) => {
     text: `
       <textarea id="tx-in" rows="10" placeholder="粘贴文本，右侧实时统计…"></textarea>
       <div class="row" style="margin-top:8px" id="tx-stats"></div>`,
+    case: `
+      <div class="row" style="margin-bottom:8px;flex-wrap:wrap">
+        <button class="btn sm" data-c="upper">大写 A-Z</button>
+        <button class="btn sm" data-c="lower">小写 a-z</button>
+        <button class="btn sm" data-c="capw">单词首字母大写</button>
+        <button class="btn sm" data-c="caps">句子首字母大写</button>
+        <button class="btn sm" data-c="invert">大小写反转</button>
+      </div>
+      <div class="row" style="margin-bottom:8px;flex-wrap:wrap">
+        <span class="muted">变量风格：</span>
+        <button class="btn sm" data-s="camel">camelCase</button>
+        <button class="btn sm" data-s="pascal">PascalCase</button>
+        <button class="btn sm" data-s="snake">snake_case</button>
+        <button class="btn sm" data-s="kebab">kebab-case</button>
+      </div>
+      <textarea id="cc-in" rows="7" placeholder="输入需要转换的文本…"></textarea>
+      <div class="row" style="margin:6px 0"><span class="muted" id="cc-status"></span></div>
+      <textarea id="cc-out" rows="7" readonly placeholder="转换结果…"></textarea>
+      <div class="row" style="margin-top:6px"><button class="btn sm" id="cc-copy">📋 复制输出</button></div>`,
     hash: `
       <div class="row" style="margin-bottom:8px">
         <select id="th-algo">
@@ -1913,6 +2497,7 @@ PAGES.devtools = (el) => {
       </div>
       <div class="muted" style="margin-bottom:6px">支持超大整数（BigInt），可带 0x/0o/0b 前缀。</div>
       <pre class="log" id="tr-out">转换结果…</pre>
+      <div class="muted" style="margin:6px 0" id="tr-status"></div>
       <div class="row" style="margin-top:6px"><button class="btn sm" id="tr-copy">📋 复制输出</button></div>`,
     regex: `
       <div class="row" style="margin-bottom:8px">
@@ -1945,6 +2530,36 @@ PAGES.devtools = (el) => {
       </div>
       <textarea id="tg-out" rows="8" readonly placeholder="生成的 UUID 列表…"></textarea>
       <div class="row" style="margin-top:6px"><button class="btn sm" id="tg-copy">📋 复制输出</button></div>`,
+    zip: `
+      <div class="tool-tabs" style="margin:0 0 10px" id="zz-mode">
+        <button class="tool-tab active" data-zm="pack">打包压缩</button>
+        <button class="tool-tab" data-zm="split">分段压缩</button>
+        <button class="tool-tab" data-zm="unzip">解压</button>
+      </div>
+      <div id="zz-body"></div>
+      <div class="muted" style="margin-top:8px">纯前端本地处理，文件不上传。分段产物命名为 .zip.001/.002…，解压时选择全部分段或单个 .zip 均可。</div>`,
+    code: `
+      <div class="row" style="margin-bottom:8px;gap:6px;flex-wrap:wrap">
+        <select id="cc-lang" style="width:auto">
+          <option value="js">语言：JavaScript</option>
+          <option value="java">语言：Java</option>
+        </select>
+        <button class="btn primary" id="cc-run">🧪 本地静态检查</button>
+        <button class="btn" id="cc-ai">🤖 AI 深度评审（可选）</button>
+        <span class="muted">本地检查可离线用；AI 评审需配置接口与 Key。</span>
+      </div>
+      <div id="cc-config" style="display:none" class="card" style="padding:10px">
+        <div class="row" style="gap:6px;flex-wrap:wrap">
+          <input type="text" id="cc-url" placeholder="API 地址，默认 https://api.deepseek.com/v1/chat/completions" style="flex:2;min-width:220px">
+          <input type="password" id="cc-key" placeholder="API Key" style="flex:1;min-width:160px">
+          <input type="text" id="cc-model" value="deepseek-chat" style="width:140px">
+          <button class="btn sm" id="cc-savecfg">保存配置</button>
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:4px">Key 仅保存在本机浏览器 localStorage；直连第三方 API 属自担风险（可改为经自有服务端代理）。</div>
+      </div>
+      <textarea id="cc-in" rows="12" placeholder="粘贴你要检查的 JS / 代码…&#10;function add(a, b) { return a == b; }&#10;var x = 1;"></textarea>
+      <div class="muted" id="cc-status" style="margin:6px 0"></div>
+      <div id="cc-out"></div>`,
   }
 
   el.innerHTML = `
@@ -1959,7 +2574,7 @@ PAGES.devtools = (el) => {
     tabsBox.innerHTML = TOOL_TABS.map(([id, label]) =>
       `<button class="tool-tab ${active === id ? 'active' : ''}" data-tool="${id}">${label}</button>`).join('')
     tabsBox.querySelectorAll('.tool-tab').forEach((btn) => {
-      btn.onclick = () => { active = btn.dataset.tool; renderTabs(); renderBody() }
+      btn.onclick = () => { active = btn.dataset.tool; state.devtool = btn.dataset.tool; renderTabs(); renderBody() }
     })
   }
 
@@ -2077,6 +2692,44 @@ PAGES.devtools = (el) => {
       }
       body.querySelector('#tx-in').addEventListener('input', update)
       update()
+    } else if (active === 'case') {
+      const toTokens = (str) => {
+        const parts = String(str).trim().split(/[\s_\-\.]+/)
+        const out = []
+        for (const part of parts) {
+          const humps = part.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+/g)
+          if (humps) out.push(...humps)
+          else if (part) out.push(part)
+        }
+        return out.map((w) => w.toLowerCase())
+      }
+      const run = (fn) => {
+        set('#cc-out', fn(val('#cc-in')))
+        showStatus('#cc-status', '✓ 转换完成', true)
+      }
+      body.querySelectorAll('[data-c]').forEach((b) => {
+        b.onclick = () => run((s0) => {
+          const kind = b.dataset.c
+          if (kind === 'upper') return s0.toUpperCase()
+          if (kind === 'lower') return s0.toLowerCase()
+          if (kind === 'capw') return s0.replace(/(^|[^\p{L}\p{N}])(\p{Ll})/gu, (m, p1, p2) => p1 + p2.toUpperCase())
+          if (kind === 'caps') return s0.replace(/(^|[.!?。！？…]\s+)(\p{Ll})/gu, (m, p1, p2) => p1 + p2.toUpperCase())
+          if (kind === 'invert') return [...s0].map((ch) => (ch === ch.toUpperCase() ? ch.toLowerCase() : ch.toUpperCase())).join('')
+          return s0
+        })
+      })
+      body.querySelectorAll('[data-s]').forEach((b) => {
+        b.onclick = () => run((s0) => {
+          const tokens = toTokens(s0)
+          const style = b.dataset.s
+          if (style === 'camel') return tokens.map((w, i) => (i === 0 ? w : w[0].toUpperCase() + w.slice(1))).join('')
+          if (style === 'pascal') return tokens.map((w) => w[0].toUpperCase() + w.slice(1)).join('')
+          if (style === 'snake') return tokens.join('_')
+          if (style === 'kebab') return tokens.join('-')
+          return s0
+        })
+      })
+      wireCopy('#cc-copy', () => val('#cc-out'))
     } else if (active === 'hash') {
       const run = async () => {
         const text = val('#th-in')
@@ -2181,6 +2834,220 @@ PAGES.devtools = (el) => {
         set('#tg-out', list.join('\n'))
       }
       wireCopy('#tg-copy', () => val('#tg-out'))
+    } else if (active === 'zip') {
+      const zipBody = body.querySelector('#zz-body')
+      const modeTabs = body.querySelector('#zz-mode')
+
+      const renderPack = () => {
+        zipBody.innerHTML = `
+          <div class="row" style="margin-bottom:8px">
+            <input type="file" id="zf-files" multiple>
+            <input type="text" id="zf-name" placeholder="压缩包名（默认 archive）" style="flex:1">
+            <button class="btn primary sm" id="zf-run">打包压缩</button>
+          </div>
+          <div class="muted" id="zf-status"></div>
+          <div id="zf-list"></div>`
+        const note = zipBody.querySelector('#zf-status')
+        zipBody.querySelector('#zf-run').onclick = async () => {
+          const files = Array.from(zipBody.querySelector('#zf-files').files || [])
+          if (!files.length) { note.textContent = '请先选择文件'; return }
+          note.textContent = '压缩中…'
+          try {
+            const entries = []
+            for (const file of files) entries.push({ name: file.name, data: await readFileAsBuffer(file) })
+            const zip = await buildZipBytes(entries)
+            const name = (zipBody.querySelector('#zf-name').value.trim() || 'archive').replace(/\.zip$/i, '') + '.zip'
+            downloadBytes(name, zip)
+            const raw = entries.reduce((a, e) => a + e.data.length, 0)
+            note.textContent = `✓ 已生成 ${name}（原 ${humanSize(raw)} → 压缩 ${humanSize(zip.length)}，节省 ${Math.round((1 - zip.length / raw) * 100)}%）`
+            zipBody.querySelector('#zf-list').innerHTML = '<div class="muted">' + entries.map((e) => esc(e.name) + ' · ' + humanSize(e.data.length)).join('<br>') + '</div>'
+          } catch (err) { note.textContent = '压缩失败：' + String(err && err.message || err) }
+        }
+      }
+
+      const renderSplit = () => {
+        zipBody.innerHTML = `
+          <div class="row" style="margin-bottom:8px">
+            <input type="file" id="zs-files" multiple>
+            <span class="muted">每段 ≤</span>
+            <select id="zs-size">
+              <option value="1">1 MB</option>
+              <option value="2">2 MB</option>
+              <option value="5" selected>5 MB</option>
+              <option value="10">10 MB</option>
+              <option value="20">20 MB</option>
+            </select>
+            <button class="btn primary sm" id="zs-run">分段压缩</button>
+          </div>
+          <div class="muted" id="zs-status"></div>
+          <div id="zs-list"></div>`
+        const note = zipBody.querySelector('#zs-status')
+        zipBody.querySelector('#zs-run').onclick = async () => {
+          const files = Array.from(zipBody.querySelector('#zs-files').files || [])
+          if (!files.length) { note.textContent = '请先选择文件'; return }
+          note.textContent = '压缩并分段中…'
+          try {
+            const entries = []
+            for (const file of files) entries.push({ name: file.name, data: await readFileAsBuffer(file) })
+            const zip = await buildZipBytes(entries)
+            const mb = Number(zipBody.querySelector('#zs-size').value) || 5
+            const parts = splitBuffer(zip, mb * 1024 * 1024)
+            const base = 'archive'
+            note.textContent = `✓ 共 ${parts.length} 段（合计 ${humanSize(zip.length)}，每段 ≤${mb}MB），下载全部后合并即可`
+            zipBody.querySelector('#zs-list').innerHTML = parts.map((p, i) => {
+              const idx = String(i + 1).padStart(3, '0')
+              return `<div class="row" style="justify-content:space-between;padding:4px 0"><span>${base}.zip.${idx} · ${humanSize(p.length)}</span><button class="btn sm" data-idx="${i}">⬇ 下载</button></div>`
+            }).join('') + `
+              <div class="row" style="margin-top:8px"><button class="btn sm" id="zs-cmd-copy">📋 复制合并命令</button></div>
+              <pre class="log" id="zs-cmd" style="max-height:120px">cat ${base}.zip.001 ${parts.slice(1).map((_, i) => base + '.zip.' + String(i + 2).padStart(3, '0')).join(' ')} > ${base}.zip</pre>`
+            zipBody.querySelectorAll('#zs-list [data-idx]').forEach((b) => {
+              b.onclick = () => downloadBytes(base + '.zip.' + String(Number(b.dataset.idx) + 1).padStart(3, '0'), parts[Number(b.dataset.idx)])
+            })
+            zipBody.querySelector('#zs-cmd-copy').onclick = async () => {
+              const ok = await copyToClipboard(zipBody.querySelector('#zs-cmd').textContent)
+              if (ok) note.textContent = '✓ 已复制合并命令'
+            }
+          } catch (err) { note.textContent = '分段压缩失败：' + String(err && err.message || err) }
+        }
+      }
+
+      const renderUnzip = () => {
+        zipBody.innerHTML = `
+          <div class="row" style="margin-bottom:8px">
+            <input type="file" id="zu-files" multiple accept=".zip,.001,.002,.003,.004,.005,.006,.007,.008,.009,.010,application/zip,application/octet-stream">
+            <button class="btn primary sm" id="zu-run">解压</button>
+          </div>
+          <div class="muted" id="zu-status">支持单个 .zip，或选择分段的全部 .001/.002/…（自动按序号合并后解压）</div>
+          <div id="zu-list"></div>`
+        const note = zipBody.querySelector('#zu-status')
+        zipBody.querySelector('#zu-run').onclick = async () => {
+          const files = Array.from(zipBody.querySelector('#zu-files').files || [])
+          if (!files.length) { note.textContent = '请先选择文件'; return }
+          note.textContent = '解析中…'
+          try {
+            let zipBytes
+            if (files.length > 1 || /\.\d+$/.test(files[0].name)) {
+              const bufs = []
+              for (const f of files) bufs.push({ name: f.name, data: await readFileAsBuffer(f) })
+              bufs.sort((a, b) => {
+                const na = Number((a.name.match(/\.(\d+)$/) || [0, '0'])[1])
+                const nb = Number((b.name.match(/\.(\d+)$/) || [0, '0'])[1])
+                return na - nb
+              })
+              zipBytes = joinBuffers(bufs.map((b) => b.data))
+              note.textContent = `✓ 已合并 ${files.length} 个分段（${humanSize(zipBytes.length)}）`
+            } else {
+              zipBytes = await readFileAsBuffer(files[0])
+            }
+            const entries = docxEntries(zipBytes)
+            if (!entries.length) throw new Error('不是有效的 ZIP 压缩包')
+            const realEntries = entries.filter((e) => !/\/$/.test(e.name))
+            const rows = realEntries.length
+              ? realEntries.map((e, i) => `<div class="row" style="justify-content:space-between;padding:4px 0"><span>${esc(e.name)}<span class="muted"> · ${e.method === 0 ? '存储' : '压缩'} · ${humanSize(e.data.length)}</span></span><button class="btn sm" data-i="${i}">⬇ 提取</button></div>`).join('')
+              : '<div class="empty">压缩包内没有文件</div>'
+            zipBody.querySelector('#zu-list').innerHTML = rows
+            zipBody.querySelectorAll('#zu-list [data-i]').forEach((b) => {
+              b.onclick = async () => {
+                const entry = realEntries[Number(b.dataset.i)]
+                try {
+                  downloadBytes(entry.name.replace(/^.*\//, ''), await zipInflateEntry(entry))
+                } catch (err) { note.textContent = '提取失败：' + String(err && err.message || err) }
+              }
+            })
+            note.textContent = `✓ 共 ${realEntries.length} 个文件${entries.length - realEntries.length ? '（含 ' + (entries.length - realEntries.length) + ' 个目录）' : ''}${files.length > 1 ? '；分段已自动合并' : ''}`
+          } catch (err) { note.textContent = '解压失败：' + String(err && err.message || err) }
+        }
+      }
+
+      const setMode = (mode) => {
+        modeTabs.querySelectorAll('.tool-tab').forEach((b) => b.classList.toggle('active', b.dataset.zm === mode))
+        if (mode === 'pack') renderPack()
+        else if (mode === 'split') renderSplit()
+        else renderUnzip()
+      }
+      modeTabs.querySelectorAll('.tool-tab').forEach((b) => { b.onclick = () => setMode(b.dataset.zm) })
+      setMode('pack')
+    } else if (active === 'code') {
+      const codeBox = status('#cc-out')
+      const codeStatus = status('#cc-status')
+      const CC_AI_KEY = 'wt-code-ai'
+      let aiCfg = (function () { try { return JSON.parse(localStorage.getItem(CC_AI_KEY)) || {} } catch (e) { return {} } })()
+
+      const showIssues = (issues, summary) => {
+        const colors = { bug: 'var(--red)', opt: 'var(--amber)', style: 'var(--text-2)' }
+        codeBox.innerHTML = summary ? `<div class="muted" style="margin-bottom:6px">${esc(summary)}</div>` : ''
+        codeBox.innerHTML += issues.length
+          ? issues.map((it) => `<div class="row" style="justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><span style="flex:1">${esc(it.msg)}</span><span style="color:${colors[it.type] || '#888'};flex-shrink:0">${it.type === 'bug' ? '风险' : it.type === 'opt' ? '优化' : '规范'} · L${it.line}</span></div>`).join('')
+          : '<div class="empty">未发现明显问题（启发式检查结果，建议再结合 AI 深度评审）</div>'
+      }
+
+      body.querySelector('#cc-run').onclick = () => {
+        const code = val('#cc-in')
+        if (!code.trim()) { codeStatus.textContent = '请先粘贴代码'; return }
+        const r = ccAnalyze(code, val('#cc-lang'))
+        const bugs = r.issues.filter((i) => i.type === 'bug').length
+        const opts = r.issues.filter((i) => i.type === 'opt').length
+        const styles = r.issues.length - bugs - opts
+        codeStatus.textContent = `检查完成：共 ${r.lines} 行 · 疑似风险 ${bugs} / 优化点 ${opts} / 规范 ${styles} · 最大嵌套 ${r.maxDepth}`
+        showIssues(r.issues)
+      }
+
+      const cfgVisible = () => {
+        const node = body.querySelector('#cc-config')
+        if (node) node.style.display = node.style.display === 'none' ? 'block' : 'none'
+      }
+      const loadCfg = () => {
+        const u = body.querySelector('#cc-url'); const k = body.querySelector('#cc-key'); const m = body.querySelector('#cc-model')
+        if (aiCfg && aiCfg.url) u.value = aiCfg.url
+        if (aiCfg && aiCfg.key) k.value = aiCfg.key
+        if (aiCfg && aiCfg.model) m.value = aiCfg.model
+      }
+      body.querySelector('#cc-savecfg').onclick = () => {
+        const u = val('#cc-url').trim() || 'https://api.deepseek.com/v1/chat/completions'
+        const k = val('#cc-key').trim()
+        const m = val('#cc-model').trim() || 'deepseek-chat'
+        if (!k) { codeStatus.textContent = '请填写 API Key'; return }
+        aiCfg = { url: u, key: k, model: m }
+        try { localStorage.setItem(CC_AI_KEY, JSON.stringify(aiCfg)) } catch (e) { /* ignore */ }
+        codeStatus.textContent = '✓ AI 配置已保存（仅存本机）'
+        void runAi()
+      }
+      const runAi = async () => {
+        const code = val('#cc-in')
+        if (!code.trim()) { codeStatus.textContent = '请先粘贴代码'; return }
+        if (!aiCfg || !aiCfg.key) { codeStatus.textContent = '请先配置 AI 接口与 Key'; return }
+        codeStatus.textContent = 'AI 深度评审中…（可能耗时 10-30s）'
+        codeBox.innerHTML = '<div class="loading">分析中…</div>'
+        try {
+          const res = await fetch(aiCfg.url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: 'Bearer ' + aiCfg.key },
+            body: JSON.stringify({
+              model: aiCfg.model || 'deepseek-chat',
+              messages: [
+                { role: 'system', content: '你是一名资深代码评审专家。请用中文给出：1) 疑似 Bug；2) 优化点；3) 规范/安全建议。每条简短标注行号/片段。' },
+                { role: 'user', content: '请评审以下代码：\n\n```\n' + code + '\n```' },
+              ],
+              stream: false,
+            }),
+          })
+          const data = await res.json()
+          if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status))
+          const text = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content
+          codeStatus.textContent = '✓ AI 评审完成'
+          codeBox.innerHTML = `<div class="answer" style="white-space:pre-wrap">${esc(text || '（无返回内容）')}</div>`
+        } catch (error) {
+          codeStatus.textContent = 'AI 评审失败：' + String(error && error.message || error)
+        }
+      }
+      // 配置按钮点击后可直接触发评审
+      // AI 按钮：已配置 Key 则直接评审；否则展开配置
+      const aiBtn = body.querySelector('#cc-ai')
+      aiBtn.onclick = () => {
+        cfgVisible()
+        loadCfg()
+        if (aiCfg && aiCfg.key) void runAi()
+      }
     }
   }
 
@@ -2210,6 +3077,16 @@ const GAMES = [
     hint: '←↑↓→ / WASD 转向 · 空格/P 暂停 · Enter 开始',
     src: '/wangtie-os/ui/games/snake.html',
   },
+  {
+    title: '英雄联盟',
+    tag: 'MOBA',
+    ico: '⚔️',
+    color: '#1f8fff',
+    desc: '大型多人在线竞技网游：5v5 峡谷对决、排位上分。需网络与游戏客户端，点击后在新窗口打开国服官网。',
+    hint: '外链游戏 · 打开 lol.qq.com（国服）',
+    external: true,
+    url: 'https://lol.qq.com/',
+  },
 ]
 
 // 十六进制颜色 → rgba()，用于生成游戏卡缩略图渐变（兼容旧版 Safari）
@@ -2223,21 +3100,25 @@ PAGES.entertainment = async (el) => {
     <div class="section-title">休息一下 <span class="muted">内置小游戏 · 工作之余放松一下</span></div>
     <div class="game-grid">
       ${GAMES.map((g) => `
-        <div class="game-card" data-src="${esc(g.src)}" data-title="${esc(g.title)}">
+        <div class="game-card" data-src="${g.src ? esc(g.src) : ''}" data-url="${g.url ? esc(g.url) : ''}" data-title="${esc(g.title)}">
           <div class="game-thumb" style="background:radial-gradient(circle at 50% 120%, ${hexToRgba(g.color, 0.45)}, transparent 62%), linear-gradient(180deg, ${hexToRgba(g.color, 0.16)}, #eef4ff);box-shadow:inset 0 0 26px ${hexToRgba(g.color, 0.3)}">${g.ico || '🎮'}</div>
           <div class="game-info">
-            <div class="game-name">${esc(g.title)} <span class="tag blue">${esc(g.tag)}</span></div>
+            <div class="game-name">${esc(g.title)} <span class="tag blue">${esc(g.tag)}</span>${g.external ? ' <span class="tag green">外链</span>' : ''}</div>
             <div class="game-desc">${esc(g.desc)}</div>
             <div class="muted">${esc(g.hint)}</div>
           </div>
-          <button class="btn primary game-play">▶ 开始游戏</button>
+          <button class="btn primary game-play">${g.external ? '🌐 打开' : '▶ 开始游戏'}</button>
         </div>`).join('')}
     </div>
-    <div class="muted" style="margin:4px 2px 0">进入游戏后先点击游戏画面激活键盘（雷霆战机需同时激活声音），再按 Enter 开始；游戏中按 P 暂停，Esc 或「返回」退出游戏。</div>`
+    <div class="muted" style="margin:4px 2px 0">内置小游戏：进入后先点击游戏画面激活键盘，再按 Enter 开始，P 暂停，Esc/「返回」退出；外链游戏（英雄联盟等）将直接在新窗口打开官网。</div>`
   el.querySelectorAll('.game-play').forEach((btn) => {
     btn.onclick = () => {
       const card = btn.closest('.game-card')
-      launchGame(card.dataset.src, card.dataset.title)
+      if (card.dataset.url) {
+        window.open(card.dataset.url, '_blank', 'noopener')
+      } else {
+        launchGame(card.dataset.src, card.dataset.title)
+      }
     }
   })
 }

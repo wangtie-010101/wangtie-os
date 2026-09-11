@@ -44,7 +44,7 @@ export interface ServiceTemplate {
 export const SERVICES: readonly ServiceTemplate[] = [
   {
     name: 'scb-online',
-    cn: '钱包联机服务',
+    cn: '票据联机服务（scb）',
     instances: ['scb-online', 'scb-batch'],
     runtime: {
       DEV: { workspace: 'scb-online', workload: 'dev', container: 'scb-online', logPath: '/home/rapp/log/scb-online/dev', dbHost: '10.23.144.199', dbPort: 1521, dbName: 'WIC_DEV', dbUser: 'wic_dev', schema: 'WIC_DEV' },
@@ -175,6 +175,9 @@ export interface VersionRecord {
 }
 
 export const VERSIONS: readonly VersionRecord[] = [
+  { version: 'v42', env: 'SIT', time: '2026/09/05 18:20:11', tables: 194, fields: 3571, changed: [{ table: 'SCB_BILL_REG_INFO', kind: '新增字段', field: 'ACPT_DT', to: 'VARCHAR2(8)' }] },
+  { version: 'v41', env: 'UAT2', time: '2026/09/04 10:05:30', tables: 194, fields: 3570, changed: [{ table: 'SCB_BILL_DISC_INFO', kind: '修改注释', field: 'DISC_RATE', to: 'NUMBER(10,6)' }] },
+
   { version: 'v39', env: 'DEV', time: '2026/08/28 17:24:33', tables: 194, fields: 3569, changed: [{ table: 'WIC_CORP_WLT_AC_BAL', kind: '新增字段', field: 'BAL_DIRECTION', to: 'VARCHAR2(2)' }] },
   { version: 'v38', env: 'DEV', time: '2026/08/28 16:14:15', tables: 194, fields: 3568, changed: [
     { table: 'WLC_PERS_WLT_OPERATE_RECORD', kind: '新增字段', field: 'FAIL_REASON', to: 'VARCHAR2(500)' },

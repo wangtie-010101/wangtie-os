@@ -13,6 +13,7 @@ import {
   type AgentReport, type Column, type DictEntry, type Environment, type KnowledgeDoc, type TableMeta,
 } from './data.ts'
 import { resolveDbPort, testTcpReachability } from './dbprobe.ts'
+import { code2session, decryptWeixinData, loadWeRunMap, saveWeRunEntry, todayStepsFromWeRun } from './werun.ts'
 
 export interface WebServerService {
   register(route: {
@@ -161,6 +162,40 @@ export function mountRoutes(host: RouteHost, options: WangtieOptions): (() => vo
         sendJson(res, 200, { ok: result.ok, code: result.code, ms: result.ms, detail: result.detail, host, port, type: body.type ?? 'mysql' })
       })
     }).catch((error: unknown) => sendJson(res, 400, { ok: false, error: String(error) }))
+  })
+
+  /* ---------------------- 微信运动（小程序通道） -------------------------- */
+  // 小程序端 POST：{ code, encryptedData, iv }（wx.login + wx.getWeRunData）
+  on('/api/werun/sync', (req, res) => {
+    if (req.method !== 'POST') { sendJson(res, 405, { ok: false, error: 'method not allowed' }); return }
+    void readJsonBody(req).then((raw) => {
+      const body = (raw ?? {}) as { code?: string; encryptedData?: string; iv?: string }
+      if (!body.code || !body.encryptedData || !body.iv) {
+        sendJson(res, 400, { ok: false, error: '缺少 code / encryptedData / iv' }); return
+      }
+      void code2session(body.code).then((session) => {
+        if (session.errcode || !session.session_key) {
+          sendJson(res, 400, { ok: false, error: session.errmsg ?? 'code2session 失败' }); return
+        }
+        try {
+          const data = decryptWeixinData(body.encryptedData, session.session_key, body.iv) as { stepInfoList?: Array<{ timestamp: number; step: number }> }
+          const { date, steps } = todayStepsFromWeRun(data)
+          if (date) saveWeRunEntry(date, steps)
+          sendJson(res, 200, { ok: true, date, steps, openid: session.openid ?? '' })
+        } catch (error) {
+          sendJson(res, 400, { ok: false, error: '解密失败：' + String(error) })
+        }
+      }).catch((error: unknown) => sendJson(res, 400, { ok: false, error: String(error) }))
+    }).catch((error: unknown) => sendJson(res, 400, { ok: false, error: String(error) }))
+  })
+
+  // 王铁 OS 健康减重：读取最近同步的步数
+  on('/api/health/werun/latest', (_req, res) => {
+    const map = loadWeRunMap()
+    const dates = Object.keys(map).sort()
+    const date = dates[dates.length - 1]
+    if (!date) { sendJson(res, 200, { ok: true, synced: false }); return }
+    sendJson(res, 200, { ok: true, synced: true, date, steps: map[date] })
   })
 
   /* ---------------------------- knowledge ----------------------------- */

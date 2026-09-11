@@ -429,3 +429,64 @@ input:focus, textarea:focus, select:focus {
   border-radius: 6px; border: 2px solid transparent; background-clip: padding-box;
 }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* 天气弹窗置顶：避免被页面内容遮挡（内容区 z=1，顶部栏提到 30） */
+.topbar { z-index: 30; }
+.weather-panel { z-index: 80; }
+.topbar, .right, .weather-wrap { overflow: visible; }
+
+/* 侧边栏分组导航 */
+.nav-group {
+  color: rgba(201, 214, 245, 0.55); font-size: 10.5px; letter-spacing: 2px;
+  padding: 12px 10px 4px; user-select: none;
+}
+.nav-item { margin: 1px 0; }
+
+/* 系统测试：进度条 */
+.t-bar { flex: 1; height: 8px; background: #e8edf6; border-radius: 999px; overflow: hidden; min-width: 120px; }
+.t-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #34d399, #2fb344); transition: width .3s ease; }
+
+/* 知识库图片条目 */
+.kb-img {
+  height: 54px; width: 54px; object-fit: cover; border-radius: 8px;
+  border: 1px solid var(--border); cursor: zoom-in; background: #fff;
+}
+.kb-lite {
+  position: fixed; inset: 0; z-index: 99999; background: rgba(5, 12, 24, 0.82);
+  display: flex; align-items: center; justify-content: center; cursor: zoom-out;
+}
+.kb-lite img {
+  max-width: min(92vw, 1200px); max-height: 90vh; border-radius: 8px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+}
+
+/* 每日待办 */
+.t-check {
+  width: 20px; height: 20px; border-radius: 50%; border: 2px solid #b9c6e0;
+  background: #fff; color: #fff; font-size: 12px; line-height: 1; cursor: pointer;
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  transition: all .15s;
+}
+.t-check:hover { border-color: var(--accent); }
+.t-check.on { background: var(--green); border-color: var(--green); }
+
+/* 健康提醒 */
+.rem-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #eef4ff; border: 1px solid var(--border); color: var(--text);
+  border-radius: 999px; padding: 3px 10px; font-size: 12px; font-family: ui-monospace, Menlo, monospace;
+}
+.rem-chip b { cursor: pointer; color: var(--text-2); }
+.rem-chip b:hover { color: var(--red); }
+.rem-switch { position: relative; width: 40px; height: 22px; cursor: pointer; }
+.rem-switch input { opacity: 0; width: 0; height: 0; }
+.rem-switch span { position: absolute; inset: 0; background: #d7deeb; border-radius: 999px; transition: .2s; }
+.rem-switch span::before { content: ''; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+.rem-switch input:checked + span { background: var(--green); }
+.rem-switch input:checked + span::before { transform: translateX(18px); }
+.rem-toast {
+  position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 99998;
+  background: rgba(20, 34, 66, 0.95); color: #fff; padding: 10px 20px; border-radius: 999px;
+  font-size: 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); animation: remUp .3s ease;
+}
+@keyframes remUp { from { transform: translate(-50%, 14px); opacity: 0 } to { transform: translate(-50%, 0); opacity: 1 } }

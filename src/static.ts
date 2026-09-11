@@ -63,12 +63,17 @@ export function staticDisposers(webServer: WebServerService, routePrefix: string
     serveFile(response, relative)
   }
 
-  registeredPaths.push(`exact:${base}`, `prefix:${uiPrefix}`)
+  registeredPaths.push(`exact:${base}`, `exact:${base}/`, `prefix:${uiPrefix}`)
 
   return [
     webServer.register({
       kind: 'exact',
       path: base,
+      handler: (_request, response) => serveFile(response, 'index.html'),
+    }),
+    webServer.register({
+      kind: 'exact',
+      path: `${base}/`,
       handler: (_request, response) => serveFile(response, 'index.html'),
     }),
     webServer.register({

@@ -1,7 +1,7 @@
 # 王铁 OS
 
 构建在 **DeepSeek Harness (DSH) Web** 之上的全屏业务应用框架 —— 参考「数币 OS」的架构与形态：
-深色侧边栏工作台 + 业务模块（**工作台 / 数据查询 / 知识库（票据·会计二级）/ 王铁 Agent / 数据字典 / 元数据管理**）与 📝 **记事本**（印象笔记风格）、🧰 **常用开发工具**、🎮 **休息一下**（内置小游戏）。
+深色侧边栏工作台 + 业务模块（**工作台 / 数据查询 / 知识库（票据·会计二级）/ 数据字典 / 系统测试**）与 📝 **记事本**（印象笔记风格）、🧰 **常用开发工具**、🎮 **休息一下**（内置小游戏）。
 
 本仓库是一个**独立的 DSH bundle 插件**（与 dshmarket 同构），安装进 web profile 后无需改动 DSH 本体。
 
@@ -23,7 +23,7 @@ wangtie-os/
 └── ui/                   # 前端（原生 JS SPA，无构建依赖）
     ├── index.html        #   入口页（王铁 OS）
     ├── style.css         #   全局样式
-    ├── main.js           #   页面逻辑：9 个页面模块 + 路由 + API 调用
+    ├── main.js           #   页面逻辑：10 个页面模块 + 路由 + API 调用
     ├── knowledge-data.js #   票据知识库演示文档（前端内置，本地检索）
     └── games/            #   休息一下内置游戏（独立单文件 HTML，iframe 全屏运行）
         └── thunder-force.html  #   雷霆战机（纵版射击小游戏）
@@ -58,11 +58,10 @@ pnpm dsh plugin --profile web add file:/Users/wangtie/Desktop/DeepSeek/deepseek-
 | 工作台 | `PAGES.dashboard` | `GET /api/app-info` | 首页入口 + 我的功能/系统概览 |
 | 数据查询 | `PAGES.query` | `POST /api/db/test`、`POST /api/sql/query`、`GET /api/sql/tables` | 自定义数据库连接（类型/地址/端口/用户名/密码，本机保存）+ 真实 TCP 连通性测试（成功/失败）+ SQL 执行（Mock）与 CSV 导出 |
 | 知识库 | `PAGES.knowledge` | `GET /api/knowledge/search?q=`、`GET /api/knowledge/docs` | 二级知识库：**票据知识库**（内置 10 篇）与**会计知识库**（内置 4 篇）；各自支持检索问答、粘贴/文件批量投喂，支持 .txt/.md/.json/**.docx（Word 自动提取正文）**（IndexedDB 持久化，`ui/knowledge-data.js`） |
-| 王铁 Agent | `PAGES.agent` | `POST /api/agent/log-search`、`GET /api/agent/reports?id=` | 日志检索步骤 + 异常链摘要 + 历史报告 |
 | 数据字典 | `PAGES.dictionary` | `GET /api/dictionary/entries`、`POST /api/dictionary/import` | 检索/分类/一键导入 |
-| 元数据管理 | `PAGES.metadata` | `GET /api/metadata/tables`、`table`、`compare`、`versions`、`POST alter-sql` | 表清单/表结构/环境比对/版本历史/结构变更 SQL |
+| 系统测试 | `PAGES.test` | —（纯前端，localStorage 持久化） | 业务系统主要功能用例：按模块执行（通过/失败）、一键冒烟测试、总体与分模块测试进度、进度摘要复制/重置 |
 | 记事本 | `PAGES.notes` | —（纯前端，IndexedDB 持久化） | 印象笔记风格三栏笔记：笔记本分组/标签/置顶/Markdown 编辑与预览/搜索/自动保存/回收站/导出 .md 与 .json 备份恢复 |
-| 常用开发工具 | `PAGES.devtools` | —（纯前端，无 API） | JSON、Base64、URL 编解码、时间戳、文本统计、哈希（SHA-1/256/384/512、CRC32）、进制转换（BigInt）、正则测试、颜色转换（HEX/RGB/HSL）、UUID 生成 |
+| 常用开发工具 | `PAGES.devtools` | —（纯前端，无 API） | JSON、Base64、URL 编解码、时间戳、文本统计、大小写转换（大写/小写/词首/句首/反转/变量风格）、哈希（SHA-1/256/384/512、CRC32）、进制转换（BigInt）、正则测试、颜色转换（HEX/RGB/HSL）、UUID 生成、压缩工具（打包压缩/分段压缩/解压） |
 | 休息一下 | `PAGES.entertainment` | —（纯前端，无 API） | 内置小游戏启动器：雷霆战机、贪吃蛇全屏运行（游戏放 `ui/games/`，新增只需登记 `GAMES`） |
 
 ## 后续扩展指南
