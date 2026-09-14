@@ -136,6 +136,14 @@ pre.log {
 .game-layer-title { font-weight: 700; }
 .game-layer-stage { flex: 1; position: relative; min-height: 0; background: #000; }
 .game-layer-stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+/* 自动隐藏工具条：默认整屏给游戏，鼠标贴近顶部才滑出 */
+.game-layer--auto .game-layer-bar {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 3; height: 46px;
+  transform: translateY(-100%); opacity: 0; transition: transform .18s ease, opacity .18s ease;
+  backdrop-filter: blur(6px); background: rgba(10,16,31,.92);
+}
+.game-layer--auto.game-layer--peek .game-layer-bar { transform: translateY(0); opacity: 1; }
+.game-layer--auto .game-layer-stage { flex: 1; }
 
 /* ---------- 票据知识库：文件上传投喂 ---------- */
 .kb-drop {
@@ -254,31 +262,8 @@ pre.log {
 .md-preview a { color: var(--accent); }
 .md-preview hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 
-/* ---------- 右上角天气 ---------- */
+/* ---------- 顶部栏 ---------- */
 .topbar { position: relative; }
-.right { display: flex; align-items: center; }
-.weather-wrap { position: relative; }
-.weather-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  border: 1px solid var(--border); background: #fff; color: var(--text);
-  padding: 5px 12px; border-radius: 999px; cursor: pointer; font-size: 13px; font-weight: 600;
-  transition: all .15s; white-space: nowrap;
-}
-.weather-chip:hover { border-color: var(--accent); color: var(--accent); }
-.weather-chip .w-ico { font-size: 15px; }
-.weather-chip .w-city { color: var(--text-2); font-weight: 400; }
-.weather-panel {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 60;
-  width: 320px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(15, 40, 90, .16); padding: 12px;
-}
-.weather-panel[hidden] { display: none; }
-.w-head { font-weight: 700; font-size: 14px; }
-.w-quick { gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
-.w-quick .btn { padding: 2px 10px; font-size: 12px; }
-.w-info { border-top: 1px dashed var(--border); padding-top: 8px; }
-.w-main { font-size: 24px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
-.w-sub { font-size: 12px; line-height: 1.8; }
 
 /* ================================================================
    优雅视觉升级（覆盖层：柔和渐变环境 · 玻璃质感 · 精致细节）
@@ -430,10 +415,9 @@ input:focus, textarea:focus, select:focus {
 }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* 天气弹窗置顶：避免被页面内容遮挡（内容区 z=1，顶部栏提到 30） */
+/* 顶部栏置顶：避免被页面内容遮挡（内容区 z=1，顶部栏提到 30） */
 .topbar { z-index: 30; }
-.weather-panel { z-index: 80; }
-.topbar, .right, .weather-wrap { overflow: visible; }
+.topbar { overflow: visible; }
 
 /* 侧边栏分组导航 */
 .nav-group {

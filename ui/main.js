@@ -74,7 +74,6 @@ function shell(page) {
     <div class="main">
       <div class="topbar">
         <div class="crumb">王铁 OS <span class="muted" id="crumb-sub"></span></div>
-        <div class="right" id="top-right"></div>
       </div>
       <div class="content" id="page"></div>
     </div>`
@@ -84,7 +83,6 @@ function shell(page) {
   // 环境切换仅在「数据查询」模块内提供（SIT / UAT / 准生产），全局不再展示
   const sub = el.querySelector('#crumb-sub')
   sub.textContent = `— ${nav.find(([id]) => id === state.page)?.[1] ?? ''}`
-  initWeatherWidget(el.querySelector('#top-right'))
   return el
 }
 
@@ -106,251 +104,6 @@ function table(columns, rows, emptyText = '暂无数据') {
   if (rows.length === 0) return `<div class="empty">${emptyText}</div>`
   return `<table><thead><tr>${columns.map((col) => `<th>${col}</th>`).join('')}</tr></thead>
     <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${esc(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table>`
-}
-
-// ---------- 右上角天气（默认查询；Open-Meteo，无需 Key） ----------
-const WEATHER_DEFAULT_CITY = '北京'
-const WEATHER_KEY = 'wt-weather-city'
-const WEATHER_AUTO_KEY = 'wt-weather-auto'
-const WEATHER_S = { city: '', data: null, ts: 0, busy: false, docHandler: null }
-
-const WMO = {
-  0: ['☀️', '晴'], 1: ['🌤️', '晴间多云'], 2: ['⛅', '多云'], 3: ['☁️', '阴'],
-  45: ['🌫️', '雾'], 48: ['🌫️', '雾凇'], 51: ['🌦️', '毛毛雨'], 53: ['🌦️', '毛毛雨'], 55: ['🌦️', '毛毛雨'],
-  61: ['🌧️', '小雨'], 63: ['🌧️', '中雨'], 65: ['🌧️', '大雨'], 66: ['🌧️', '冻雨'], 67: ['🌧️', '冻雨'],
-  71: ['🌨️', '小雪'], 73: ['🌨️', '中雪'], 75: ['❄️', '大雪'], 77: ['❄️', '雪粒'],
-  80: ['🌦️', '阵雨'], 81: ['🌧️', '强阵雨'], 82: ['⛈️', '暴雨'],
-  85: ['🌨️', '阵雪'], 86: ['❄️', '强阵雪'], 95: ['⛈️', '雷阵雨'], 96: ['⛈️', '雷雨伴冰雹'], 99: ['⛈️', '强雷雨伴冰雹'],
-}
-const wmoInfo = (code) => WMO[code] || ['🌡️', '未知']
-
-const CITY_COORDS = {
-  '北京': [39.9042, 116.4074], '上海': [31.2304, 121.4737], '广州': [23.1291, 113.2644],
-  '深圳': [22.5431, 114.0579], '杭州': [30.2741, 120.1551], '成都': [30.5728, 104.0668],
-  '武汉': [30.5928, 114.3055], '西安': [34.3416, 108.9398], '南京': [32.0603, 118.7969],
-  '重庆': [29.5630, 106.5516], '天津': [39.3434, 117.3616], '苏州': [31.2989, 120.5853],
-  '长沙': [28.2282, 112.9388], '郑州': [34.7466, 113.6254], '济南': [36.6512, 117.1201],
-  '青岛': [36.0671, 120.3826], '厦门': [24.4798, 118.0894], '福州': [26.0745, 119.2965],
-  '沈阳': [41.8057, 123.4315], '大连': [38.9140, 121.6147], '昆明': [24.8801, 102.8329],
-  '乌鲁木齐': [43.8256, 87.6168], '拉萨': [29.6520, 91.1721], '哈尔滨': [45.8038, 126.5349],
-}
-async function weatherGeocode(name) {
-  const url = 'https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(name) + '&count=1&language=zh&format=json'
-  const res = await fetch(url)
-  if (!res.ok) throw new Error('地理编码服务不可用')
-  const json = await res.json()
-  const g = json && json.results && json.results[0]
-  if (!g) throw new Error('未找到城市：' + name)
-  return g
-}
-
-async function weatherFetch(city) {
-  const key = String(city || '').trim().replace(/市$/, '')
-  let lat, lon, geoName
-  const coords = CITY_COORDS[key]
-  if (coords) { lat = coords[0]; lon = coords[1]; geoName = key + '市' }
-  else {
-    // 坐标表未命中：尝试在线地理编码
-    let g
-    try { g = await weatherGeocode(city) } catch (error) { throw new Error('未收录该城市，可尝试：' + Object.keys(CITY_COORDS).join(' / ')) }
-    lat = g.latitude; lon = g.longitude; geoName = g.name || city
-  }
-  const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat +
-    '&longitude=' + lon + '&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,is_day&timezone=auto&forecast_days=1'
-  const res = await fetch(url)
-  if (!res.ok) throw new Error('天气服务不可用')
-  const json = await res.json()
-  const c = json.current
-  return {
-    city: String(city || '').trim() || geoName,
-    admin: geoName + ' · 坐标 ' + lat.toFixed(2) + ',' + lon.toFixed(2),
-    temp: Math.round(c.temperature_2m),
-    feel: Math.round(c.apparent_temperature),
-    hum: Math.round(c.relative_humidity_2m),
-    wind: Math.round(c.wind_speed_10m),
-    code: c.weather_code,
-    isDay: c.is_day === 1,
-  }
-}
-
-// 按经纬度直达查询（自动定位用）
-async function weatherFetchCoord(lat, lon, label, admin) {
-  const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat +
-    '&longitude=' + lon + '&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,is_day&timezone=auto&forecast_days=1'
-  const res = await fetch(url)
-  if (!res.ok) throw new Error('天气服务不可用')
-  const json = await res.json()
-  const c = json.current
-  return {
-    city: label || '当前位置',
-    admin: admin || '',
-    temp: Math.round(c.temperature_2m),
-    feel: Math.round(c.apparent_temperature),
-    hum: Math.round(c.relative_humidity_2m),
-    wind: Math.round(c.wind_speed_10m),
-    code: c.weather_code,
-    isDay: c.is_day === 1,
-  }
-}
-
-// IP 定位：优先 ip-api（返回中文城市），失败退回 geojs（仅坐标）
-async function detectLocation() {
-  const candidates = [
-    async () => {
-      const res = await fetch('http://ip-api.com/json/?lang=zh-CN&fields=status,message,country,city,regionName,lat,lon')
-      if (!res.ok) return null
-      const j = await res.json()
-      if (j && j.status === 'success') {
-        const label = j.city || j.regionName || j.country || ''
-        const admin = [j.country, j.regionName].filter(Boolean).join(' · ')
-        return { lat: j.lat, lon: j.lon, label, admin }
-      }
-      return null
-    },
-    async () => {
-      const res = await fetch('https://get.geojs.io/v1/ip/geo.json')
-      if (!res.ok) return null
-      const j = await res.json()
-      const lat = parseFloat(j.latitude)
-      const lon = parseFloat(j.longitude)
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
-      return { lat, lon, label: j.country || '当前位置', admin: j.timezone || '' }
-    },
-  ]
-  for (const fn of candidates) {
-    try {
-      const d = await fn()
-      if (d) return d
-    } catch (error) { /* 尝试下一个 */ }
-  }
-  return null
-}
-
-async function weatherRefresh(city) {
-  const data = await weatherFetch(city)
-  WEATHER_S.city = city
-  WEATHER_S.data = data
-  WEATHER_S.ts = Date.now()
-  WEATHER_S.busy = false
-  try {
-    localStorage.setItem(WEATHER_KEY, city)
-    localStorage.setItem(WEATHER_AUTO_KEY, '0')
-  } catch (error) { /* ignore */ }
-  return data
-}
-
-async function weatherEnsure(force) {
-  const stored = WEATHER_S.city || (function () { try { return localStorage.getItem(WEATHER_KEY) } catch (e) { return null } })() || WEATHER_DEFAULT_CITY
-  const freshEnough = WEATHER_S.data && WEATHER_S.city === stored && Date.now() - WEATHER_S.ts < 10 * 60 * 1000
-  if (!force && freshEnough) return WEATHER_S.data
-  if (WEATHER_S.busy) return WEATHER_S.data
-  WEATHER_S.busy = true
-  WEATHER_S.city = stored
-  return weatherRefresh(stored)
-}
-
-function initWeatherWidget(root) {
-  if (!root) return
-  const chipHtml = (d, loading) => d
-    ? `<span class="w-ico">${wmoInfo(d.code)[0]}</span><b>${d.temp}°</b><span class="w-city">${esc(d.city)}</span>`
-    : (loading ? '天气加载中…' : '🌤 天气')
-  root.innerHTML = `
-    <div class="weather-wrap">
-      <button class="weather-chip" id="w-chip" title="查看 / 切换城市">${chipHtml(null, true)}</button>
-      <div class="weather-panel" id="w-panel" hidden>
-        <div class="row" style="justify-content:space-between;margin-bottom:4px">
-          <div class="w-head">🌍 天气 <span class="muted">Open-Meteo</span></div>
-          <button class="btn sm" id="w-refresh" title="刷新天气">🔄</button>
-        </div>
-        <div class="row" style="margin:8px 0">
-          <input type="text" id="w-city" placeholder="输入城市名，如 北京" style="flex:1">
-          <button class="btn primary sm" id="w-go">查询</button>
-        </div>
-        <div class="row w-quick" id="w-quick">
-          ${['北京', '上海', '广州', '深圳', '杭州'].map((c) => `<button class="btn sm" data-city="${c}">${c}</button>`).join('')}
-        </div>
-        <div id="w-info" class="w-info"></div>
-      </div>
-    </div>`
-  const chip = root.querySelector('#w-chip')
-  const panel = root.querySelector('#w-panel')
-  const info = root.querySelector('#w-info')
-  const cityInput = root.querySelector('#w-city')
-  const renderInfo = (d, extra) => {
-    if (!d) { info.innerHTML = `<div class="muted">${esc(extra || '暂无数据')}</div>`; return }
-    const [ico, desc] = wmoInfo(d.code)
-    info.innerHTML = `
-      <div class="w-main">${ico} <b>${d.temp}°C</b> <span>${desc}</span></div>
-      <div class="muted w-sub">${esc(d.city)}${d.admin ? '（' + esc(d.admin) + '）' : ''}</div>
-      <div class="muted w-sub">体感 ${d.feel}° · 湿度 ${d.hum}% · 风速 ${d.wind} km/h · 更新 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}</div>`
-  }
-  const doQuery = async (name, force) => {
-    const target = (name || cityInput.value || '').trim()
-    if (!target) return
-    cityInput.value = target
-    chip.innerHTML = '天气查询中…'
-    try {
-      const d = await weatherRefresh(target)
-      renderInfo(d)
-      chip.innerHTML = chipHtml(d)
-    } catch (error) {
-      chip.innerHTML = '⚠ 天气不可用'
-      renderInfo(null, String(error && error.message || error))
-    }
-  }
-  chip.onclick = () => { panel.hidden = !panel.hidden }
-  root.querySelector('#w-go').onclick = () => void doQuery()
-  cityInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doQuery() })
-  root.querySelectorAll('#w-quick [data-city]').forEach((b) => {
-    b.onclick = () => { cityInput.value = b.dataset.city; void doQuery(b.dataset.city) }
-  })
-  const refreshBtn = root.querySelector('#w-refresh')
-  if (refreshBtn) refreshBtn.onclick = () => {
-    const name = (WEATHER_S.city || cityInput.value || '').trim() || '北京'
-    void doQuery(name, true)
-  }
-  // 点击弹窗以外的区域时自动关闭（每次重建只保留一个全局监听，避免重复）
-  if (WEATHER_S.docHandler) document.removeEventListener('pointerdown', WEATHER_S.docHandler)
-  WEATHER_S.docHandler = (e) => {
-    const wrapEl = root.querySelector('.weather-wrap')
-    if (wrapEl && !wrapEl.contains(e.target) && !panel.hidden) panel.hidden = true
-  }
-  document.addEventListener('pointerdown', WEATHER_S.docHandler)
-
-  // 启动默认查询：默认显示「北京」；只有用户在面板里手动选择过城市时才记住并优先显示
-  const runDefault = async () => {
-    if (WEATHER_S.data && Date.now() - WEATHER_S.ts < 10 * 60 * 1000) {
-      chip.innerHTML = chipHtml(WEATHER_S.data)
-      renderInfo(WEATHER_S.data)
-      return
-    }
-    chip.innerHTML = '天气加载中…'
-    try {
-      let savedCity = null
-      let savedAuto = null
-      try {
-        savedCity = localStorage.getItem(WEATHER_KEY)
-        savedAuto = localStorage.getItem(WEATHER_AUTO_KEY)
-      } catch (error) { /* ignore */ }
-      // 兼容迁移：旧版本曾把默认「上海」写为手动选择；按新默认要求清除上海遗留
-      if (savedCity === '上海') {
-        try { localStorage.removeItem(WEATHER_KEY); localStorage.removeItem(WEATHER_AUTO_KEY) } catch (err) { /* ignore */ }
-        savedCity = null
-        savedAuto = null
-      }
-      // 仅当存在「手动选择」标记（auto=0）时采用已存城市；旧版/自动产生的缓存一律忽略
-      const useSaved = !!savedCity && savedAuto === '0'
-      const d = useSaved ? await weatherRefresh(savedCity) : await weatherRefresh(WEATHER_DEFAULT_CITY)
-      WEATHER_S.city = d.city
-      WEATHER_S.data = d
-      WEATHER_S.ts = Date.now()
-      chip.innerHTML = chipHtml(d)
-      renderInfo(d)
-    } catch (error) {
-      chip.innerHTML = '⚠ 天气不可用'
-    }
-  }
-  void runDefault()
 }
 
 /* ------------------------------ 工作台 ---------------------------- */
@@ -3078,6 +2831,15 @@ const GAMES = [
     src: '/wangtie-os/ui/games/snake.html',
   },
   {
+    title: '植物大战僵尸',
+    tag: '塔防',
+    ico: '🌻',
+    color: '#f0a11c',
+    desc: '昼夜三关塔防：种植物挡僵尸，收集阳光，扛过 10 波进攻守住你的草坪。',
+    hint: '1–8 选植物 · S 铲子 · P 暂停 · 点击阳光收集 · Enter 开始',
+    src: '/wangtie-os/ui/games/plants-vs-zombies.html',
+  },
+  {
     title: '英雄联盟',
     tag: 'MOBA',
     ico: '⚔️',
@@ -3130,14 +2892,20 @@ function launchGame(src, title) {
   layer.innerHTML = `
     <div class="game-layer-bar">
       <button class="btn" data-act="back">← 返回王铁 OS</button>
-      <div class="game-layer-title">🚀 ${esc(title)}</div>
-      <div class="muted" style="flex:1">点击游戏画面后按 Enter 开始 · P 暂停 · Esc 退出</div>
+      <div class="game-layer-title">🎮 ${esc(title)}</div>
+      <div class="muted" style="flex:1">点击画面激活键盘 · 游戏内可点「⛶ 全屏」或按 F 拉满画面 · Esc 返回王铁 OS</div>
     </div>
-    <div class="game-layer-stage"><iframe src="${esc(src)}" title="${esc(title)}" allow="autoplay"></iframe></div>`
+    <div class="game-layer-stage"><iframe src="${esc(src)}" title="${esc(title)}" allow="autoplay; fullscreen"></iframe></div>`
   const close = () => { window.removeEventListener('keydown', onKey); layer.remove() }
   const onKey = (e) => { if (e.key === 'Escape') close() }
   window.addEventListener('keydown', onKey)
   layer.querySelector('[data-act="back"]').onclick = close
+  // 顶部工具条自动隐藏：鼠标移到窗口最上方时再出现，平时把整屏让给游戏
+  const bar = layer.querySelector('.game-layer-bar')
+  layer.classList.add('game-layer--auto')
+  layer.addEventListener('mousemove', (e) => {
+    layer.classList.toggle('game-layer--peek', e.clientY <= 74)
+  })
   document.body.append(layer)
   // 自动聚焦游戏画面，让键盘事件直接进入 iframe（同源可聚焦）
   const frame = layer.querySelector('iframe')
