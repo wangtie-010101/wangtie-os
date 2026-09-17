@@ -160,7 +160,7 @@ export const TABLES: readonly TableMeta[] = [
 /** 版本历史：模拟「元数据版本管理」（每次结构变更生成一条）。 */
 export interface VersionChange {
   readonly table: string
-  readonly kind: '新增字段' | '类型变更'
+  readonly kind: '新增字段' | '类型变更' | '修改注释'
   readonly field: string
   readonly from?: string
   readonly to?: string

@@ -1,7 +1,7 @@
 {
   "name": "wangtie-os",
   "version": "0.1.0-rc.1",
-  "description": "王铁 OS — 构建在 DeepSeek Harness 之上的全屏业务应用框架：知识库 RAG / SQL 查询 / 日志分析 Agent / 数据字典 / 元数据管理 / 参数配置",
+  "description": "王铁 OS — 构建在 DeepSeek Harness 之上的全屏业务应用框架：OceanBase 管理（Oracle 模式）/ 知识库 / SQL 查询 / 数据字典 / 记事本 / 开发工具",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -20,6 +20,10 @@
     }
   },
   "scripts": {
+    "preview": "node scripts/preview.mjs",
+    "test": "node scripts/test.mjs",
+    "test:integration": "node scripts/test.mjs --integration",
+    "typecheck:oceanbase": "tsc -p tsconfig.oceanbase.json --noEmit",
     "build": "node build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -27,11 +31,20 @@
     "@deepseek-ai/cordis": "^4.0.1"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@types/node": "^22.20.3",
+    "@types/oracledb": "^7.0.3",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "esbuild": "^0.21.5",
+    "jsdom": "^26.1.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "typescript": "^5.9.3"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "mysql2": "^3.24.4",
+    "oracledb": "^7.0.1"
+  }
 }

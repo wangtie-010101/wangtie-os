@@ -1,6 +1,6 @@
 /**
  * 王铁 OS — 构建脚本（esbuild）。
- *  - 服务端：src/index.ts → lib/index.js（单文件 ESM bundle，无外部依赖）
+ *  - 服务端：src/index.ts → lib/index.js（ESM bundle，oracledb 为运行时依赖）
  *  - 客户端：src/client/index.ts → client/client.js（DSH 客户端插件「工厂式 CJS」契约）
  */
 
@@ -21,6 +21,7 @@ await build({
   outfile: 'lib/index.js',
   platform: 'node',
   format: 'esm',
+  external: ['mysql2/promise', 'oracledb'],
 })
 
 // 2) 客户端 bundle（DSH 客户端插件工厂式 CJS 契约：

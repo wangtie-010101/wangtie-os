@@ -1,0 +1,30 @@
+{
+  "_说明": "DDL 比较用到的数据库连接信息（模板）。复制成 config/ddl-environments.json 后填写真实值；该文件已被 .gitignore 忽略，不会提交到仓库。也可放到 $DSH_HOME/wangtie-os/ddl-environments.json（从 DSH 宿主访问时更方便）。",
+  "_可用字段": "key 环境标识 / name 显示名 / host 主机 / port 端口 / cluster 集群名 / tenant 租户名 / user 用户名 / password 密码 / schema 比较的模式(留空则取用户名) / enabled 是否参与比较",
+  "environments": [
+    {
+      "key": "SIT",
+      "name": "示例环境-sit",
+      "host": "10.0.0.1",
+      "port": 2883,
+      "cluster": "your_cluster",
+      "tenant": "your_sit_tenant",
+      "user": "YOUR_USER",
+      "password": "YOUR_PASSWORD",
+      "schema": "",
+      "enabled": true
+    },
+    {
+      "key": "UAT",
+      "name": "示例环境-uat",
+      "host": "10.0.0.1",
+      "port": 2883,
+      "cluster": "your_cluster",
+      "tenant": "your_uat_tenant",
+      "user": "YOUR_USER",
+      "password": "YOUR_PASSWORD",
+      "schema": "",
+      "enabled": true
+    }
+  ]
+}

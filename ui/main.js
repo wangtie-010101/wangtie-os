@@ -6,11 +6,14 @@
 
 // 知识库（票据 / 会计）内置演示文档（前端内置数据，本地检索，无需后端）
 import { KNOWLEDGE, KNOWLEDGE_ACCOUNTING } from './knowledge-data.js'
+import { renderOceanBase } from './oceanbase.js'
+import { renderDdlCompare } from './ddl-compare.js'
 
 const API = '/wangtie-os/api'
 // 环境仅在「数据查询」模块内提供选择：SIT / UAT / 准生产（内部值 SIT / UAT1 / UAT2）
 const ENV_OPTIONS = [['SIT', 'SIT'], ['UAT1', 'UAT'], ['UAT2', '准生产']]
 const state = { env: 'SIT', instance: 'scb-online', page: 'dashboard' }
+let leaveCurrentPage = null
 
 /* ------------------------------ 基础工具 ------------------------------ */
 
@@ -41,7 +44,9 @@ function shell(page) {
   const nav = [
     ['dashboard', '工作台', '🏠'],
     ['__group__', '常用业务'],
-    ['query', '数据查询', '🔍'],
+    ['query', 'SQL 查询（演示）', '🔍'],
+    ['oceanbase', '数据查询', '🗄️'],
+    ['ddlcompare', 'DDL 比较', '🔬'],
     ['knowledge', '知识库', '📚'],
     ['dictionary', '数据字典工具', '📖'],
     ['__group__', '效率工具'],
@@ -78,7 +83,7 @@ function shell(page) {
       <div class="content" id="page"></div>
     </div>`
   el.querySelectorAll('.nav-item').forEach((item) => {
-    item.onclick = () => { state.page = item.dataset.page; shellAndRender() }
+    item.onclick = () => { if (leaveCurrentPage?.() === false) return; leaveCurrentPage = null; state.page = item.dataset.page; shellAndRender() }
   })
   // 环境切换仅在「数据查询」模块内提供（SIT / UAT / 准生产），全局不再展示
   const sub = el.querySelector('#crumb-sub')
@@ -95,6 +100,8 @@ function shellAndRender() {
 }
 
 const PAGES = {}
+PAGES.oceanbase = el => { leaveCurrentPage = renderOceanBase(el) }
+PAGES.ddlcompare = el => { leaveCurrentPage = renderDdlCompare(el) }
 
 function card(title, body, extra = '') {
   return `<div class="card"><h3>${title}<span class="muted">${extra}</span></h3>${body}</div>`
@@ -114,7 +121,9 @@ PAGES.dashboard = async (el) => {
     <div class="grid">
       ${[
         ['knowledge', '📚', '知识库', '票据 / 会计两级知识库：检索问答 + 知识投喂（RAG）'],
-        ['query', '🔍', '数据查询', '自定义数据库连接（7 类）与 SQL 查询'],
+        ['query', '🔍', 'SQL 查询（演示）', '自定义数据库连接（7 类）与 SQL 查询（内置演示数据源）'],
+        ['oceanbase', '🗄️', '数据查询', 'OceanBase Oracle 兼容模式：浏览模式（Schema）/表结构，查询及增删改数据'],
+        ['ddlcompare', '🔬', 'DDL 比较', 'SIT ↔ UAT 表结构差异对照（连接信息读配置文件）'],
         ['dictionary', '📖', '数据字典工具', '字典一键导入 / 搜索 / 分类'],
         ['health', '⏰', '健康提醒', '到点提醒喝水 / 运动 / 休息'],
         ['notes', '📝', '记事本', '记录开发常用命令 / 配置 / 笔记，自动保存'],

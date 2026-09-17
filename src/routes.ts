@@ -13,6 +13,7 @@ import {
   type AgentReport, type Column, type DictEntry, type Environment, type KnowledgeDoc, type TableMeta,
 } from './data.ts'
 import { resolveDbPort, testTcpReachability } from './dbprobe.ts'
+import { mountOceanBase } from './oceanbase-routes.ts'
 import { code2session, decryptWeixinData, loadWeRunMap, saveWeRunEntry, todayStepsFromWeRun } from './werun.ts'
 
 export interface WebServerService {
@@ -178,7 +179,7 @@ export function mountRoutes(host: RouteHost, options: WangtieOptions): (() => vo
           sendJson(res, 400, { ok: false, error: session.errmsg ?? 'code2session 失败' }); return
         }
         try {
-          const data = decryptWeixinData(body.encryptedData, session.session_key, body.iv) as { stepInfoList?: Array<{ timestamp: number; step: number }> }
+          const data = decryptWeixinData(body.encryptedData!, session.session_key, body.iv!) as { stepInfoList?: Array<{ timestamp: number; step: number }> }
           const { date, steps } = todayStepsFromWeRun(data)
           if (date) saveWeRunEntry(date, steps)
           sendJson(res, 200, { ok: true, date, steps, openid: session.openid ?? '' })
@@ -440,6 +441,7 @@ export function mountRoutes(host: RouteHost, options: WangtieOptions): (() => vo
     }).catch((error: unknown) => sendJson(res, 400, { error: String(error) }))
   })
 
+  disposers.push(...mountOceanBase(host, route))
   log(`${options.appName}: mounted ${disposers.length} routes under ${route}`)
   return disposers
 }

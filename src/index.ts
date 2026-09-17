@@ -32,7 +32,7 @@ export function apply(ctx: Context, config?: Config): void {
       appName: config?.appName ?? '王铁 OS',
       appVersion: config?.appVersion ?? '0.1.0-rc.1',
     }
-    host.effect(() => {
+    hostCtx.effect(() => {
       const disposers: (() => void)[] = []
       // 两段挂载相互隔离：任一段失败不阻塞另一段，错误原样暴露到 health。
       try {

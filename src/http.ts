@@ -30,10 +30,10 @@ export function sameOrigin(request: IncomingMessage): boolean {
 export async function readJsonBody(request: IncomingMessage, maxBytes = 1 << 20): Promise<unknown> {
   const chunks: Buffer[] = []
   let size = 0
-  for await (const chunk of request) {
+  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     size += buffer.length
-    if (size > maxBytes) throw new Error('request body too large')
+    if (size > maxBytes) { request.resume(); throw new Error('request body too large') }
     chunks.push(buffer)
   }
   if (chunks.length === 0) return null

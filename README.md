@@ -1,5 +1,10 @@
 # 王铁 OS
 
+新增：**DDL 比较**菜单，比较两个环境（SIT / UAT）的表结构差异（字段/主键/索引/注释/视图定义），
+连接信息放在配置文件 `config/ddl-environments.json`（页面不回传密码），详见 [DDL 比较使用说明](docs/DDL比较使用说明.md)。
+
+**数据查询**菜单（OceanBase Oracle 兼容模式），支持 **Oracle 兼容模式租户**的真实连接（**MySQL 线协议 + Oracle 方言 SQL**，与 OceanBase Connector/J 一致）、模式（Schema）/表结构浏览、分页筛选和表数据增删改查（有主键用主键，无主键堆表用 ROWID）。详见 [OceanBase 使用说明](docs/OceanBase使用说明.md)。本地可执行 `npm run build`、`npm run preview` 后访问 `http://127.0.0.1:3081/wangtie-os/`。
+
 构建在 **DeepSeek Harness (DSH) Web** 之上的全屏业务应用框架 —— 参考「数币 OS」的架构与形态：
 深色侧边栏工作台 + 业务模块（**工作台 / 数据查询 / 知识库（票据·会计二级）/ 数据字典 / 系统测试**）与 📝 **记事本**（印象笔记风格）、🧰 **常用开发工具**、🎮 **休息一下**（内置小游戏）。
 
@@ -11,6 +16,8 @@
 wangtie-os/
 ├── package.json          # 插件清单（dsh.bundle.patch 声明，类似 dshmarket）
 ├── cordis.patch.yml      # profile 层补丁：插入插件条目
+├── config/
+│   └── ddl-environments.json  # DDL 比较的环境连接信息（含密码，注意权限）
 ├── build.mjs             # esbuild 构建（服务端单文件 bundle）
 ├── src/                  # 服务端（TypeScript，esbuild → lib/index.js）
 │   ├── index.ts          #   cordis 插件入口 apply(ctx, config)：获取 webServer 并挂载路由
@@ -19,24 +26,62 @@ wangtie-os/
 │   ├── http.ts           #   sendJson / sameOrigin / readJsonBody 工具
 │   ├── config.ts         #   配置存储 $DSH_HOME/wangtie-os/config.json
 │   ├── dbprobe.ts         #   数据库连接探测：TCP 可达性（/api/db/test）
+│   ├── oceanbase.ts      #   OceanBase Oracle 兼容模式数据访问层（mysql2 传输 + Oracle 方言 SQL）
+│   ├── oceanbase-routes.ts #  /api/oceanbase/* 全部动作 + Oracle/MySQL 错误码翻译
+│   ├── connections.ts    #   连接档案（多库 + 环境别名，密码不落盘）
+│   ├── ddl-compare.ts    #   DDL 比较：读配置 → 抓两侧字典快照 → 差异计算 + DDL 重建
+│   └── dbprobe.ts        #   TCP 可达性预检（连接诊断第一层）
 │   └── data.ts           #   演示数据（环境/服务/表/字典/知识文档/Agent 报告）
 └── ui/                   # 前端（原生 JS SPA，无构建依赖）
     ├── index.html        #   入口页（王铁 OS）
     ├── style.css         #   全局样式
-    ├── main.js           #   页面逻辑：10 个页面模块 + 路由 + API 调用
+    ├── main.js           #   页面逻辑：页面模块 + 路由 + API 调用
+    ├── oceanbase.js      #   OceanBase 管理页（Oracle 模式：Schema/表/字段/增删改查）
+    ├── ddl-compare.js    #   DDL 比较页（SIT ↔ UAT 结构差异 + 左右 DDL 对照）
     ├── knowledge-data.js #   票据知识库演示文档（前端内置，本地检索）
     └── games/            #   休息一下内置游戏（独立单文件 HTML，iframe 全屏运行）
         └── thunder-force.html  #   雷霆战机（纵版射击小游戏）
 ```
 
-**运行链路**：`dsh web` 启动 → profile 层栈加载 `wangtie-os` → `apply()` 挂载 24 条 HTTP 路由 → 浏览器访问 `http://127.0.0.1:3080/wangtie-os/` 进入应用。
+**运行链路**：`dsh web` 启动 → profile 层栈加载 `wangtie-os` → `apply()` 挂载 28 条 HTTP 路由 → 浏览器访问 `http://127.0.0.1:3080/wangtie-os/` 进入应用。
+
+**OceanBase 管理的传输层是 mysql2（MySQL 协议）**：Oracle「兼容模式」指租户的 SQL 方言，线协议仍是 MySQL 协议（OceanBase Connector/J 即 MariaDB Connector/J 分支，实测 ODP 2883 不回应 Oracle 协议 TNS），因此连接方式与官方 JDBC 一致、SQL 全部使用 Oracle 方言。
+
+## 作为 DSH 插件安装（宿主 3080）
+
+本包本身就是一个 **DSH bundle 插件**（`dsh.bundle.patch` + `cordis.patch.yml` + `dsh.client` 客户端半边），
+装进 web profile 后由宿主托管，访问 `http://127.0.0.1:3080/wangtie-os/`（不再需要 3081 的本地预览）。
+
+```sh
+# 1) 构建（产出 lib/index.js 与 client/client.js）
+node build.mjs
+
+# 2) 装进 web profile（DSH 官方插件流程）
+cd <deepseek-harness 目录>
+pnpm dsh plugin --profile web add file:<本项目绝对路径>
+
+# 3) 重启 dsh web —— 宿主半边只在进程启动时 import 一次，改代码后必须重启
+#    （客户端半边 handler 改动，浏览器刷新即可；侧边栏按钮由 client-hmr 热更新）
+
+# 4) 打开
+#    http://127.0.0.1:3080/wangtie-os/
+#    http://127.0.0.1:3080/wangtie-os/api/health   （应列出 36 条路由）
+```
+
+要点：
+
+- **宿主进程必须能解析 `mysql2`**（本包 `dependencies` 已声明；profile 的 node_modules 里通常已有）；
+- **DDL 比较的配置文件**放在 `$DSH_HOME/wangtie-os/ddl-environments.json`（推荐，不用进 node_modules）
+  或 `<项目>/config/ddl-environments.json`；页面顶部会显示实际生效的路径；
+- 侧边栏入口按钮打开**同源** `/wangtie-os/`；
+- 只用预览服务（`npm run preview`，默认 3081）时功能与宿主版完全一致，两者可并存，代码同源。
 
 ## 安装（开发方式）
 
 ```sh
-# 在 wangtie-os 目录构建（首次需 npm i esbuild）
+# 在 wangtie-os 目录构建（首次需 npm install：含 esbuild 与运行时依赖 mysql2）
 cd wangtie-os
-npm install       # 安装 esbuild 等开发依赖
+npm install       # 安装依赖（mysql2 是「OceanBase 管理」的数据库驱动）
 node build.mjs    # 产出 lib/index.js（ui/ 无需构建）
 
 # 安装进 web profile（DSH 官方插件流程）
@@ -57,6 +102,7 @@ pnpm dsh plugin --profile web add file:/Users/wangtie/Desktop/DeepSeek/deepseek-
 | --- | --- | --- | --- |
 | 工作台 | `PAGES.dashboard` | `GET /api/app-info` | 首页入口 + 我的功能/系统概览 |
 | 数据查询 | `PAGES.query` | `POST /api/db/test`、`POST /api/sql/query`、`GET /api/sql/tables` | 自定义数据库连接（类型/地址/端口/用户名/密码，本机保存）+ 真实 TCP 连通性测试（成功/失败）+ SQL 执行（Mock）与 CSV 导出 |
+| 数据查询 | `PAGES.oceanbase` / `ui/oceanbase.js` | `POST /api/oceanbase/{connect,tables,rows,insert,update,delete}` | **Oracle 兼容模式**租户真实连接（mysql2 + Oracle 方言）：模式（Schema）/表/视图/字段浏览、分页排序筛选、按主键或 ROWID 增删改查、当前页 CSV 导出；写前事务内锁行并校验原值，冲突 409、超时/断连标记结果未确认 |
 | 知识库 | `PAGES.knowledge` | `GET /api/knowledge/search?q=`、`GET /api/knowledge/docs` | 二级知识库：**票据知识库**（内置 10 篇）与**会计知识库**（内置 4 篇）；各自支持检索问答、粘贴/文件批量投喂，支持 .txt/.md/.json/**.docx（Word 自动提取正文）**（IndexedDB 持久化，`ui/knowledge-data.js`） |
 | 数据字典 | `PAGES.dictionary` | `GET /api/dictionary/entries`、`POST /api/dictionary/import` | 检索/分类/一键导入 |
 | 系统测试 | `PAGES.test` | —（纯前端，localStorage 持久化） | 业务系统主要功能用例：按模块执行（通过/失败）、一键冒烟测试、总体与分模块测试进度、进度摘要复制/重置 |
@@ -74,4 +120,15 @@ pnpm dsh plugin --profile web add file:/Users/wangtie/Desktop/DeepSeek/deepseek-
 
 - 演示环境：Mock 数据、密码字段不落盘（`ui` 页明确提示）；
 - 静态资源托管带路径穿越防护（`static.ts`）；
-- 变更类接口（PUT/POST）在生产环境应加 `sameOrigin` 校验与权限控制。
+- 变更类接口（PUT/POST）在生产环境应加 `sameOrigin` 校验与权限控制；
+- **OceanBase 管理** `/api/oceanbase/*` 只接受同源 JSON POST：写操作使用参数化绑定 + 双引号标识符转义，
+  且必须有完整主键或 ROWID 才会下发 UPDATE/DELETE；错误响应只回错误号与中文原因，不回显 SQL、账号或原始行数据；
+  连接密码仅存于浏览器页面内存，不回写 localStorage / IndexedDB，也不落盘。
+
+## 测试
+
+```sh
+npm test                 # 单元测试 + jsdom 前端交互测试（不接触真实数据库）
+npm run typecheck        # 全项目类型检查（含 Oracle 数据访问层）
+npm run test:integration # 需要一台真实 OceanBase Oracle 模式租户，见 docs/OceanBase使用说明.md
+```

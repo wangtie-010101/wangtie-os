@@ -1,3 +1,7 @@
 node_modules/
+.test-build/
+.local-db/
 .DS_Store
 *.log
+config/ddl-environments.local.json
+config/ddl-environments.json

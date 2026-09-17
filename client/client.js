@@ -28,12 +28,13 @@ __export(client_exports, {
 });
 module.exports = __toCommonJS(client_exports);
 var import_react = require("react");
+var APP_URL = "/wangtie-os/";
 var name = "wangtie-os";
 var inject = ["slots"];
 function SidebarTrigger() {
   return (0, import_react.createElement)("button", {
     onClick: () => {
-      window.open("/wangtie-os", "_blank", "noopener");
+      window.open(APP_URL, "_blank", "noopener");
     },
     style: {
       width: "100%",
@@ -46,7 +47,7 @@ function SidebarTrigger() {
       color: "#cdd7ea",
       textAlign: "left"
     },
-    title: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00\u738B\u94C1 OS"
+    title: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00\u738B\u94C1 OS\uFF08\u5BBF\u4E3B\u6258\u7BA1 /wangtie-os\uFF09"
   }, "\u{1F34A} \u738B\u94C1 OS");
 }
 function apply(ctx) {
