@@ -32,7 +32,7 @@ type ObjectValue = Record<string, unknown>
 /** Oracle 绑定值：文本、数字、NULL（Oracle 没有布尔列类型）。 */
 type SqlValue = string | number | null
 
-/** 只允许 Oracle 兼容模式的租户（MySQL 模式请用「数据查询」里的通用工具）。 */
+/** 只允许 Oracle 兼容模式的租户（MySQL 模式请改用 obclient / 官方 JDBC）。 */
 const TENANT_MODE = 'oracle'
 /** 默认端口：ODP/OBProxy 2883（直连 observer 才是 2881）。 */
 const DEFAULT_PORT = 2883
@@ -581,7 +581,7 @@ export function orderClause(columns: Column[], sort: unknown, direction: unknown
   return items.length ? ` ORDER BY ${items.join(', ')}` : ''
 }
 
-/* -------------------------------- 数据查询 -------------------------------- */
+/* -------------------------------- OceanBase 管理 --------------------------- */
 
 export interface RowQuery { sql: string; binds: Record<string, SqlValue> }
 

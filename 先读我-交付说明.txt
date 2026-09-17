@@ -1,5 +1,5 @@
-王铁 OS · OceanBase 菜单交付包
-整理日期：2026-09-17
+王铁 OS · 交付包
+整理日期：2026-09-17（最近一次变更：移除「SQL 查询（演示）」，OceanBase 页面统一更名为「OceanBase 管理」）
 
 内容：完整项目源码、服务端/客户端构建结果、依赖锁文件、测试代码、使用说明和验收记录。
 不含：node_modules、Git 历史、本机测试数据库及数据库密码、临时下载文件。
@@ -10,13 +10,22 @@
 3. 执行 npm ci --legacy-peer-deps
 4. 执行 npm run build
 5. 执行 npm run preview
-6. 浏览器访问 http://127.0.0.1:3081/wangtie-os/ ，选择左侧 OceanBase 管理。
+6. 浏览器访问 http://127.0.0.1:3081/wangtie-os/ ，左侧选择「OceanBase 管理」。
 
-功能范围：OceanBase MySQL 兼容模式，数据库连接、库表/字段浏览、表数据查询、新增、编辑、删除及当前页 CSV 导出。不含建表、删表或 Oracle 模式。
-验证：单元/交互检查、真实 MariaDB 兼容链路及浏览器操作已通过；OceanBase 本体兼容性尚未完成验证。详细结果见 docs/OceanBase验收记录.md。
+功能范围：工作台、OceanBase 管理（Oracle 兼容模式：模式/表/字段浏览，表数据查询、新增、编辑、删除及
+当前页 CSV 导出；不含建表、删表，只支持 Oracle 模式租户）、DDL 比较（SIT ↔ UAT 表结构差异，连接信息读
+config/ddl-environments.json，页面不回传密码、不下发 DDL）、知识库（票据/会计）、数据字典、记事本、
+常用开发工具、休息一下、健康提醒。
+
+已移除：SQL 查询（演示）——自定义数据库连接 + Mock SQL 编辑器，及其后端 /api/db/test、/api/sql/*。
+原侧边栏里那一项名叫「数据查询」，其实就是 OceanBase 页面，现已恢复并统一改名为「OceanBase 管理」。
+
+验证：单元/交互检查、真实 MariaDB 兼容链路及浏览器操作已通过；OceanBase 本体兼容性尚未完成验证。
+详细结果见 docs/OceanBase验收记录.md。
 
 npm test：运行单元与交互测试。
 npm run typecheck：运行全项目类型检查。
+npm run typecheck:oceanbase：只检查 Oracle 数据访问层。
 npm run test:integration：需单独准备专用测试实例和配置，包内不附数据库密码。详见 docs/OceanBase使用说明.md。
 
 如果需要安装到 DSH Web，请参考 README.md 及 docs/OceanBase使用说明.md。

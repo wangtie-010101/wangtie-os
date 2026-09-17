@@ -10,9 +10,9 @@ import { renderOceanBase } from './oceanbase.js'
 import { renderDdlCompare } from './ddl-compare.js'
 
 const API = '/wangtie-os/api'
-// 环境仅在「数据查询」模块内提供选择：SIT / UAT / 准生产（内部值 SIT / UAT1 / UAT2）
+// 工作台「可用环境」展示用的中文别名：SIT / UAT / 准生产（内部值 SIT / UAT1 / UAT2）
 const ENV_OPTIONS = [['SIT', 'SIT'], ['UAT1', 'UAT'], ['UAT2', '准生产']]
-const state = { env: 'SIT', instance: 'scb-online', page: 'dashboard' }
+const state = { page: 'dashboard' }
 let leaveCurrentPage = null
 
 /* ------------------------------ 基础工具 ------------------------------ */
@@ -44,8 +44,7 @@ function shell(page) {
   const nav = [
     ['dashboard', '工作台', '🏠'],
     ['__group__', '常用业务'],
-    ['query', 'SQL 查询（演示）', '🔍'],
-    ['oceanbase', '数据查询', '🗄️'],
+    ['oceanbase', 'OceanBase 管理', '🗄️'],
     ['ddlcompare', 'DDL 比较', '🔬'],
     ['knowledge', '知识库', '📚'],
     ['dictionary', '数据字典工具', '📖'],
@@ -85,7 +84,6 @@ function shell(page) {
   el.querySelectorAll('.nav-item').forEach((item) => {
     item.onclick = () => { if (leaveCurrentPage?.() === false) return; leaveCurrentPage = null; state.page = item.dataset.page; shellAndRender() }
   })
-  // 环境切换仅在「数据查询」模块内提供（SIT / UAT / 准生产），全局不再展示
   const sub = el.querySelector('#crumb-sub')
   sub.textContent = `— ${nav.find(([id]) => id === state.page)?.[1] ?? ''}`
   return el
@@ -121,8 +119,7 @@ PAGES.dashboard = async (el) => {
     <div class="grid">
       ${[
         ['knowledge', '📚', '知识库', '票据 / 会计两级知识库：检索问答 + 知识投喂（RAG）'],
-        ['query', '🔍', 'SQL 查询（演示）', '自定义数据库连接（7 类）与 SQL 查询（内置演示数据源）'],
-        ['oceanbase', '🗄️', '数据查询', 'OceanBase Oracle 兼容模式：浏览模式（Schema）/表结构，查询及增删改数据'],
+        ['oceanbase', '🗄️', 'OceanBase 管理', 'OceanBase Oracle 兼容模式：浏览模式（Schema）/表结构，查询及增删改数据'],
         ['ddlcompare', '🔬', 'DDL 比较', 'SIT ↔ UAT 表结构差异对照（连接信息读配置文件）'],
         ['dictionary', '📖', '数据字典工具', '字典一键导入 / 搜索 / 分类'],
         ['health', '⏰', '健康提醒', '到点提醒喝水 / 运动 / 休息'],
@@ -150,7 +147,8 @@ PAGES.dashboard = async (el) => {
       : '-'
     // —— 按当前功能集整理模块描述文案（与后端解耦，永不出错）——
     const MODULE_LINES = [
-      ['数据查询', '自定义数据库连接与 SQL 查询'],
+      ['OceanBase 管理', 'Oracle 兼容模式：表数据浏览与增删改'],
+      ['DDL 比较', 'SIT ↔ UAT 表结构差异对照'],
       ['知识库', '票据 / 会计知识检索与投喂'],
       ['数据字典', '字典检索与一键导入'],
       ['健康提醒', '到点提醒喝水 / 运动 / 休息'],
@@ -171,7 +169,8 @@ PAGES.dashboard = async (el) => {
   } catch (error) {
     // 概览接口不可用时：整卡回退为纯文字「系统信息 · 模块概览」（无可点击项，不展示任何报错）
     const FALLBACK_LINES = [
-      ['数据查询', '自定义数据库连接与 SQL 查询'],
+      ['OceanBase 管理', 'Oracle 兼容模式：表数据浏览与增删改'],
+      ['DDL 比较', 'SIT ↔ UAT 表结构差异对照'],
       ['知识库', '票据 / 会计知识检索与投喂'],
       ['数据字典', '字典检索与一键导入'],
       ['记事本', 'Markdown 三栏笔记'],
@@ -185,275 +184,6 @@ PAGES.dashboard = async (el) => {
       </div>
       <div class="muted" style="margin-top:10px">以上为各功能模块的说明，仅供查看</div>`
   }
-}
-
-/* -------------------------------- 数据查询 ------------------------------ */
-
-PAGES.query = async (el) => {
-  // ── 主流工具式「数据查询」：连接档案 / SQL 模板·历史·收藏 / 结果过滤与导出 ──
-  const DB_TYPES = [
-    ['oracle', 'Oracle'], ['mysql', 'MySQL'], ['postgresql', 'PostgreSQL'],
-    ['sqlserver', 'SQL Server'], ['dm', '达梦 DM'], ['kingbase', '人大金仓 Kingbase'], ['oceanbase', 'OceanBase'],
-  ]
-  const DB_DEFAULT_PORT = { oracle: 1521, mysql: 3306, postgresql: 5432, sqlserver: 1433, dm: 5236, kingbase: 54321, oceanbase: 2881 }
-  const LS = { profile: 'wt-db-profiles', history: 'wt-sql-history', favs: 'wt-sql-favs', active: 'wt-db-active' }
-
-  const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch (e) { return d } }
-  const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch (e) { /* ignore */ } }
-
-  let profiles = lsGet(LS.profile, [])
-  let history = lsGet(LS.history, [])
-  let favs = lsGet(LS.favs, [])
-  let lastRes = null          // { columns, rows }
-  let filterText = ''
-  let limitRows = 200
-
-  el.innerHTML = `
-    <div class="section-title">数据查询 <span class="muted">连接管理 · SQL 编辑器 · 结果网格（当前为内置演示数据源）</span></div>
-
-    <div class="card">
-      <h3>🔌 数据库连接 <span class="muted" id="db-note"></span></h3>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:8px 18px;margin-bottom:10px">
-        <div class="row"><span class="muted" style="width:130px">档案名称</span><input type="text" id="db-title" placeholder="如 生产票据库" style="flex:1"></div>
-        <div class="row"><span class="muted" style="width:130px">数据库类型</span><select id="db-type" style="flex:1">${DB_TYPES.map(([v, label]) => `<option value="${v}">${label}</option>`).join('')}</select></div>
-        <div class="row"><span class="muted" style="width:130px">数据库地址</span><input type="text" id="db-host" placeholder="IP / 域名" style="flex:1"></div>
-        <div class="row"><span class="muted" style="width:130px">端口</span><input type="text" id="db-port" placeholder="留空自动按类型填充" style="flex:1"></div>
-        <div class="row"><span class="muted" style="width:130px">数据库 / SID</span><input type="text" id="db-name" placeholder="可留空" style="flex:1"></div>
-        <div class="row"><span class="muted" style="width:130px">用户名</span><input type="text" id="db-user" placeholder="请输入用户名" style="flex:1"></div>
-        <div class="row"><span class="muted" style="width:130px">密码</span><input type="password" id="db-pass" placeholder="请输入密码" style="flex:1">
-          <button type="button" class="btn sm" id="db-pass-eye" title="显示 / 隐藏密码">👁</button></div>
-      </div>
-      <div class="row">
-        <button class="btn sm" id="db-save">💾 另存为连接档案</button>
-        <button class="btn sm danger" id="db-delete" title="删除当前档案">🗑</button>
-        <button class="btn primary" id="db-test">🧪 测试连接</button>
-        <span id="db-test-res" class="muted"></span>
-      </div>
-      <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px" id="qp-list"></div>
-    </div>
-
-    <div class="card">
-      <h3 style="display:flex;align-items:center;gap:8px">
-        SQL 编辑器
-        <button class="btn sm" id="q-fav" title="收藏当前 SQL">★ 收藏</button>
-        <span class="muted" style="font-size:12px">Ctrl/Cmd + Enter 执行</span>
-      </h3>
-      <div class="row" style="margin-bottom:8px;gap:6px;flex-wrap:wrap">
-        <select id="sql-hist" style="max-width:230px"><option value="">🕘 历史记录…</option></select>
-        <select id="sql-fav" style="max-width:230px"><option value="">★ 我的收藏…</option></select>
-        <button class="btn sm" id="q-clear">清空</button>
-      </div>
-      <textarea id="sql-text" rows="7" placeholder="请输入您的SQL语句"></textarea>
-      <div class="row" style="margin-top:10px;gap:6px;flex-wrap:wrap">
-        <button class="btn primary" id="sql-run">▶ 执行查询</button>
-        <button class="btn" id="sql-export">导出 CSV</button>
-        <button class="btn" id="sql-json">导出 JSON</button>
-        <span class="muted">返回行数 ≤</span>
-        <select id="sql-limit"><option>50</option><option selected>200</option><option>1000</option></select>
-        <input type="text" id="res-filter" placeholder="🔍 过滤当前结果…" style="flex:1;min-width:140px">
-        <span class="muted" id="sql-cost"></span>
-      </div>
-    </div>
-    <div id="sql-result"></div>`
-
-  const $id = (id) => el.querySelector('#' + id)
-
-  /* ---------- 连接档案 ---------- */
-  const readProfile = () => ({
-    title: $id('db-title').value.trim(),
-    type: $id('db-type').value,
-    host: $id('db-host').value.trim(),
-    port: $id('db-port').value.trim(),
-    dbName: $id('db-name').value.trim(),
-    username: $id('db-user').value.trim(),
-    password: $id('db-pass').value,
-  })
-  const applyProfile = (p) => {
-    $id('db-title').value = p.title || ''
-    $id('db-type').value = p.type || 'mysql'
-    $id('db-host').value = p.host || ''
-    $id('db-port').value = p.port || ''
-    $id('db-name').value = p.dbName || ''
-    $id('db-user').value = p.username || ''
-    $id('db-pass').value = p.password || ''
-  }
-  const renderProfiles = () => {
-    const box = $id('qp-list')
-    if (!profiles.length) { box.innerHTML = '<span class="muted">尚无连接档案，填写上方信息后点「另存为连接档案」</span>'; return }
-    const active = lsGet(LS.active, '')
-    box.innerHTML = profiles.map((p, i) => `
-      <button class="btn sm tag-chip ${p.key === active ? 'active' : ''}" data-i="${i}">
-        ${esc(p.title || p.host || ('档案' + (i + 1)))}${p.host ? ' · ' + esc(p.host) : ''}
-      </button>`).join('')
-    box.querySelectorAll('[data-i]').forEach((b) => {
-      b.onclick = () => {
-        const p = profiles[Number(b.dataset.i)]
-        applyProfile(p)
-        lsSet(LS.active, p.key)
-        renderProfiles()
-        $id('db-note').textContent = `已载入档案：${p.title || p.host}`
-      }
-    })
-  }
-  $id('db-save').onclick = () => {
-    const p = readProfile()
-    if (!p.host) { $id('db-note').textContent = '请至少填写数据库地址'; return }
-    const key = (p.title || p.host || '档案').trim() + '|' + Date.now()
-    p.key = key
-    profiles = profiles.filter((x) => x.key !== key)
-    profiles.unshift(p)
-    lsSet(LS.profile, profiles)
-    lsSet(LS.active, key)
-    $id('db-note').textContent = '✓ 档案已保存并设为当前'
-    renderProfiles()
-  }
-  $id('db-delete').onclick = () => {
-    const p = readProfile()
-    const hit = profiles.find((x) => x.key === lsGet(LS.active, '') || (x.title === p.title && x.host === p.host))
-    if (!hit || !window.confirm('确定删除当前连接档案？')) return
-    profiles = profiles.filter((x) => x.key !== hit.key)
-    lsSet(LS.profile, profiles)
-    renderProfiles()
-    $id('db-note').textContent = '已删除档案'
-  }
-  $id('db-pass-eye').onclick = () => {
-    const pass = $id('db-pass')
-    const show = pass.type === 'password'
-    pass.type = show ? 'text' : 'password'
-    $id('db-pass-eye').textContent = show ? '🙈' : '👁'
-  }
-  const setTest = (html, ok) => {
-    const node = $id('db-test-res')
-    node.innerHTML = html
-    node.style.color = ok === true ? 'var(--green)' : (ok === false ? 'var(--red)' : 'var(--text-2)')
-  }
-  $id('db-test').onclick = async () => {
-    const profile = readProfile()
-    if (!profile.host) { setTest('✗ 请先填写数据库地址', false); return }
-    setTest('正在测试连接（后端 TCP 探测）…')
-    try {
-      const data = await api('/api/db/test', { method: 'POST', body: JSON.stringify(profile) })
-      setTest(data.ok ? `✓ <b>连接成功</b> · ${esc(data.host)}:${data.port}（${data.ms}ms）` : `✗ 连接失败 · ${esc(data.code || '')} — ${esc(data.detail || '')}`, data.ok)
-    } catch (error) {
-      setTest(String(error).includes('404')
-        ? '✗ 探测接口需重启 DSH Web 后启用（连接档案与 SQL 不受影响）'
-        : `✗ 测试请求失败：${esc(String(error))}`, false)
-    }
-  }
-
-  // 类型切换自动填端口
-  $id('db-type').addEventListener('change', () => {
-    const cur = $id('db-port').value.trim()
-    const isDefault = Object.values(DB_DEFAULT_PORT).some((p) => String(p) === cur)
-    if (cur === '' || isDefault) $id('db-port').value = DB_DEFAULT_PORT[$id('db-type').value] || ''
-  })
-
-  /* ---------- SQL 历史 / 收藏 / 模板 ---------- */
-  const fillSelect = (sel, arr, labelField) => {
-    sel.innerHTML = `<option value="">${sel === $id('sql-hist') ? '🕘 历史记录…' : '★ 我的收藏…'}</option>` +
-      arr.map((it, i) => `<option value="${i}">${esc(it[labelField]).slice(0, 42)}</option>`).join('')
-  }
-  fillSelect($id('sql-hist'), history, 0)
-  fillSelect($id('sql-fav'), favs, 'name')
-
-  $id('sql-hist').onchange = () => {
-    const v = Number($id('sql-hist').value)
-    if (Number.isFinite(v) && history[v]) { $id('sql-text').value = history[v]; $id('sql-hist').value = '' }
-  }
-  $id('sql-fav').onchange = () => {
-    const v = Number($id('sql-fav').value)
-    if (Number.isFinite(v) && favs[v]) { $id('sql-text').value = favs[v].sql; $id('sql-fav').value = '' }
-  }
-  $id('q-fav').onclick = () => {
-    const sql = $id('sql-text').value.trim()
-    if (!sql) return
-    const name = window.prompt('收藏名称：', sql.slice(0, 24))
-    if (name === null) return
-    favs.unshift({ name: name.trim() || sql.slice(0, 24), sql })
-    favs = favs.slice(0, 50)
-    lsSet(LS.favs, favs)
-    fillSelect($id('sql-fav'), favs, 'name')
-    $id('db-note').textContent = '✓ 已收藏'
-  }
-  $id('q-clear').onclick = () => { $id('sql-text').value = ''; $id('sql-result').innerHTML = ''; lastRes = null }
-
-  /* ---------- 执行与结果 ---------- */
-  const renderGrid = () => {
-    const box = $id('sql-result')
-    if (!lastRes) return
-    const { columns, rows } = lastRes
-    let list = rows
-    const kw = filterText.trim().toLowerCase()
-    if (kw) list = rows.filter((r) => columns.some((c) => String(r[c.name] ?? '').toLowerCase().includes(kw)))
-    list = list.slice(0, limitRows)
-    box.innerHTML = card(`查询结果（${columns.length} 列 × ${rows.length} 行${kw ? ' · 过滤后 ' + list.length + ' 行' : ''}${rows.length > limitRows ? ' · 仅显示前 ' + limitRows + ' 行' : ''}）`,
-      list.length ? `<div style="overflow:auto;max-height:520px">${table(columns.map((c) => `${c.name} (${c.cn})`), list.map((r) => columns.map((c) => r[c.name] ?? '')))}</div>` : '<div class="empty">无匹配结果</div>')
-  }
-  const run = async () => {
-    const sql = $id('sql-text').value
-    const box = $id('sql-result')
-    if (!sql.trim()) { box.innerHTML = '<div class="muted">请先输入或从模板选择一条 SQL</div>'; return }
-    limitRows = Number($id('sql-limit').value) || 200
-    filterText = ''
-    if ($id('res-filter')) $id('res-filter').value = ''
-    box.innerHTML = '<div class="loading">执行中…</div>'
-    try {
-      const data = await api('/api/sql/query', { method: 'POST', body: JSON.stringify({ sql }) })
-      if (!data.table) {
-        box.innerHTML = `<div class="card"><div class="muted">${esc(data.message)}</div>
-          <div class="tip" style="margin-top:8px">💡 当前为内置演示数据源：请从上方「📋 模板」选择可运行示例，或在档案中配置真实数据库后由网关直连。</div></div>`
-        return
-      }
-      lastRes = { columns: data.columns, rows: data.rows }
-      $id('sql-cost').textContent = `cost ${data.costMs}ms · ${data.rows.length} 行 × ${data.columns.length} 列`
-      renderGrid()
-      // 记录历史
-      history = history.filter((h) => h !== sql)
-      history.unshift(sql)
-      history = history.slice(0, 20)
-      lsSet(LS.history, history)
-      fillSelect($id('sql-hist'), history, 0)
-    } catch (error) {
-      box.innerHTML = `<div class="error-text">${esc(String(error))}</div>`
-    }
-  }
-  $id('sql-run').onclick = run
-  $id('sql-text').addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); void run() }
-  })
-  $id('res-filter').addEventListener('input', (e) => { filterText = e.target.value; renderGrid() })
-  $id('sql-limit').addEventListener('change', (e) => { limitRows = Number(e.target.value) || 200; renderGrid() })
-
-  const exportRows = () => {
-    if (!lastRes) return []
-    const { columns, rows } = lastRes
-    let list = rows
-    const kw = filterText.trim().toLowerCase()
-    if (kw) list = rows.filter((r) => columns.some((c) => String(r[c.name] ?? '').toLowerCase().includes(kw)))
-    return { columns, rows: list.slice(0, limitRows) }
-  }
-  $id('sql-export').onclick = () => {
-    const { columns, rows } = exportRows()
-    const csv = [columns.map((c) => c.cn).join(',')].concat(rows.map((r) => columns.map((c) => `"${String(r[c.name] ?? '').replace(/"/g, '""')}"`).join(','))).join('\n')
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }))
-    a.download = 'query-result.csv'
-    a.click()
-  }
-  $id('sql-json').onclick = () => {
-    const { columns, rows } = exportRows()
-    const json = rows.map((r) => Object.fromEntries(columns.map((c) => [c.name, r[c.name] ?? null])))
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' }))
-    a.download = 'query-result.json'
-    a.click()
-  }
-
-  // 载入当前档案
-  const activeKey = lsGet(LS.active, '')
-  const activeProfile = profiles.find((p) => p.key === activeKey) || profiles[0]
-  if (activeProfile) applyProfile(activeProfile)
-  renderProfiles()
 }
 
 /* -------------------------------- 知识库 -------------------------------- */

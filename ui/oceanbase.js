@@ -1,5 +1,5 @@
 /**
- * 王铁 OS — 「数据查询（OceanBase Oracle 兼容模式）」前端（Oracle 兼容模式租户）。
+ * 王铁 OS — 「OceanBase 管理」前端（OceanBase Oracle 兼容模式租户）。
  * 服务端契约见 src/oceanbase-routes.ts：connect / tables / rows / insert / update / delete。
  *
  * 关键事实：Oracle **兼容模式**指的是租户的 SQL 方言，线协议仍是 **MySQL 协议**
@@ -69,7 +69,7 @@ export function renderOceanBase(el) {
   let tables = [], result = null, offset = 0, busy = false
   let activeFilter = null, activeSort = '', activeDirection = 'asc', activeLimit = 50
   el.innerHTML = `
-    <div class="section-title">数据查询 <span class="muted">OceanBase Oracle 兼容模式 · 直连数据字典</span></div>
+    <div class="section-title">OceanBase 管理 <span class="muted">Oracle 兼容模式 · 直连数据字典</span></div>
     <div class="card">
       <h3>数据库连接 <span class="muted" id="ob-status">${connected ? '已连接 · 密码仅保留在本次页面会话' : '连接后浏览模式、表结构并管理表数据'}</span></h3>
       <div class="ob-profiles">

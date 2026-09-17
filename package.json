@@ -1,7 +1,7 @@
 {
   "name": "wangtie-os",
   "version": "0.1.0-rc.1",
-  "description": "王铁 OS — 构建在 DeepSeek Harness 之上的全屏业务应用框架：OceanBase 管理（Oracle 模式）/ 知识库 / SQL 查询 / 数据字典 / 记事本 / 开发工具",
+  "description": "王铁 OS — 构建在 DeepSeek Harness 之上的全屏业务应用框架：OceanBase 管理（Oracle 模式）/ DDL 比较 / 知识库 / 数据字典 / 记事本 / 开发工具",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

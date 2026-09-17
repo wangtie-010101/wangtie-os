@@ -38,12 +38,12 @@ export function apply(ctx: Context, config?: Config): void {
       try {
         disposers.push(...mountRoutes(host, options))
       } catch (error) {
-        noteMountError('api', String(error))
+        noteMountError('api', String(error), error instanceof Error ? String(error.stack ?? '') : '')
       }
       try {
         disposers.push(...staticDisposers(host.webServer, options.routePrefix))
       } catch (error) {
-        noteMountError('static', String(error))
+        noteMountError('static', String(error), error instanceof Error ? String(error.stack ?? '') : '')
       }
       return () => {
         for (const dispose of disposers) dispose()

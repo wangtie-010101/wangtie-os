@@ -1,6 +1,7 @@
 /**
  * 王铁 OS — HTTP API 路由集合。
- * 每个 module 一段：health / config / knowledge / sql / agent / dictionary / metadata。
+ * 每个 module 一段：health / config / knowledge / agent / dictionary / metadata。
+ * 「OceanBase 管理」与「DDL 比较」的路由由 oceanbase-routes.ts 单独挂载（/api/oceanbase/*）。
  * 全部为 Mock 实现，接入真实环境时替换各 handler 内部调用即可。
  */
 
@@ -12,7 +13,6 @@ import {
   AGENT_REPORTS, DICTIONARY, ENVIRONMENTS, KNOWLEDGE_DOCS, SERVICES, TABLES, VERSIONS,
   type AgentReport, type Column, type DictEntry, type Environment, type KnowledgeDoc, type TableMeta,
 } from './data.ts'
-import { resolveDbPort, testTcpReachability } from './dbprobe.ts'
 import { mountOceanBase } from './oceanbase-routes.ts'
 import { code2session, decryptWeixinData, loadWeRunMap, saveWeRunEntry, todayStepsFromWeRun } from './werun.ts'
 
@@ -71,11 +71,11 @@ export const staticDebug = { called: 0 }
 /** 调试信息：本模块实际加载路径（health 返回）。 */
 export const debugModulePath = fileURLToPath(import.meta.url)
 
-/** 挂载错误记录（health 返回，逐段隔离）。 */
-export const mountState = { apiError: '', staticError: '' }
-export function noteMountError(section: 'api' | 'static', message: string): void {
-  if (section === 'api') mountState.apiError = message
-  else mountState.staticError = message
+/** 挂载错误记录（health 返回，逐段隔离；detail 带堆栈，便于定位挂载期异常）。 */
+export const mountState = { apiError: '', staticError: '', apiDetail: '', staticDetail: '' }
+export function noteMountError(section: 'api' | 'static', message: string, detail = ''): void {
+  if (section === 'api') { mountState.apiError = message; mountState.apiDetail = detail }
+  else { mountState.staticError = message; mountState.staticDetail = detail }
 }
 
 export function mountRoutes(host: RouteHost, options: WangtieOptions): (() => void)[] {
@@ -91,7 +91,9 @@ export function mountRoutes(host: RouteHost, options: WangtieOptions): (() => vo
     registeredPaths.push(`${route}${path}`)
     disposers.push(host.webServer.register({ kind: 'exact', path: `${route}${path}`, handler }))
   }
-  const log = host.logger?.info ?? (() => { /* noop */ })
+  // 注意：绝不能写成 `const log = host.logger?.info`——宿主 logger 是可调用的服务对象，
+  // 脱壳调用会丢掉 this 并抛 TypeError: this is not a function。包一层箭头函数保住 receiver。
+  const log = (message: string): void => { host.logger?.info?.(message) }
 
   /* ------------------------------ health ------------------------------ */
   on('/api/health', (_req, res) => {
@@ -138,31 +140,6 @@ export function mountRoutes(host: RouteHost, options: WangtieOptions): (() => vo
       saveConfig(config)
       sendJson(res, 200, { ok: true, config })
     }).catch((error: unknown) => sendJson(res, 400, { error: String(error) }))
-  })
-
-  /* ------------------------- db 连接测试 ------------------------------ */
-  // 自定义数据库连接：仅验证目标 地址:端口 的真实可达性（TCP 探测）。
-  on('/api/db/test', (req, res) => {
-    if (req.method !== 'POST') {
-      sendJson(res, 405, { ok: false, error: 'method not allowed' })
-      return
-    }
-    void readJsonBody(req).then((raw) => {
-      const body = (raw ?? {}) as import('./dbprobe.ts').DbProfileInput
-      const host = String(body.host ?? '').trim()
-      if (host === '') {
-        sendJson(res, 400, { ok: false, error: 'host（数据库地址）不能为空' })
-        return
-      }
-      const port = resolveDbPort(body)
-      if (port === null) {
-        sendJson(res, 400, { ok: false, error: '端口无效（1-65535），或未提供且无该类型默认端口' })
-        return
-      }
-      void testTcpReachability(host, port, 3000).then((result) => {
-        sendJson(res, 200, { ok: result.ok, code: result.code, ms: result.ms, detail: result.detail, host, port, type: body.type ?? 'mysql' })
-      })
-    }).catch((error: unknown) => sendJson(res, 400, { ok: false, error: String(error) }))
   })
 
   /* ---------------------- 微信运动（小程序通道） -------------------------- */
@@ -233,48 +210,6 @@ export function mountRoutes(host: RouteHost, options: WangtieOptions): (() => vo
       tables: best.doc.tables ?? [],
       docId: best.doc.id,
     })
-  })
-
-  /* ------------------------------- sql -------------------------------- */
-  function detectTable(sql: string): TableMeta | undefined {
-    const match = /\bfrom\s+([a-z_][a-z0-9_]*)/i.exec(sql.replace(/[\r\n]/g, ' '))
-    if (match === null) return undefined
-    const name = match[1]!.toUpperCase()
-    return TABLES.find(table => table.name === name)
-  }
-
-  on('/api/sql/tables', (_req, res) => {
-    sendJson(res, 200, TABLES.map(table => ({ name: table.name, cn: table.cn, domain: table.domain })))
-  })
-
-  on('/api/sql/query', (req, res) => {
-    if (req.method !== 'POST') {
-      sendJson(res, 405, { error: 'method not allowed' })
-      return
-    }
-    void readJsonBody(req).then((raw) => {
-      const body = (raw ?? {}) as { sql?: string; env?: string }
-      const sql = (body.sql ?? '').trim()
-      if (sql === '') {
-        sendJson(res, 400, { error: 'empty sql' })
-        return
-      }
-      const table = detectTable(sql)
-      const costMs = 3 + Math.floor(Math.random() * 40)
-      if (table === undefined) {
-        sendJson(res, 200, {
-          env: body.env ?? 'DEV',
-          sql, table: null, costMs,
-          columns: [], rows: [], message: '未识别到表名（Mock 查询），接入真实数据源后由 SQL 网关执行。',
-        })
-        return
-      }
-      const columns = table.columns.map(column => ({ name: column.name, cn: column.cn, type: column.type }))
-      const rows = Array.from({ length: 8 }, (_, i) => Object.fromEntries(table.columns.map(column => (
-        [column.name, column.type.startsWith('NUMBER') ? (i + 1) * 100 : `${column.name.slice(0, 4)}${i + 1}`]
-      ))))
-      sendJson(res, 200, { env: body.env ?? 'DEV', sql, table: table.name, costMs, columns, rows, truncated: rows.length >= 8 })
-    }).catch((error: unknown) => sendJson(res, 400, { error: String(error) }))
   })
 
   /* ------------------------------- agent ------------------------------ */

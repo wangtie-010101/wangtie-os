@@ -1,9 +1,9 @@
-# 数据查询菜单（OceanBase Oracle 兼容模式）
+# OceanBase 管理菜单（OceanBase Oracle 兼容模式）
 
 「OceanBase 管理」用于真实连接 **OceanBase Oracle 兼容模式租户**，浏览模式（Schema）、表与视图、字段结构，
 并对表数据做查询、新增、修改、删除和当前页 CSV 导出。
 
-> 本模块**只支持 Oracle 模式租户**。MySQL 模式租户请使用「数据查询」里的通用连接工具；
+> 本模块**只支持 Oracle 模式租户**。MySQL 模式租户请改用 obclient / 官方 JDBC / MySQL 客户端连接；
 > 服务端收到 `mode: "mysql"` 会直接拒绝（`仅支持 OceanBase Oracle 兼容模式租户`）。
 
 ## 关键事实：Oracle「兼容模式」指的是 SQL 方言，线协议是 MySQL 协议
