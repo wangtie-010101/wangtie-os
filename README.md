@@ -26,6 +26,11 @@ wangtie-os/
 │   ├── ddl-environments.json          # DDL 比较的环境连接信息（含密码，注意权限，已在 .gitignore）
 │   └── ddl-environments.example.json  # 提交到仓库的占位模板（密码写成 YOUR_PASSWORD）
 ├── build.mjs             # esbuild 构建（服务端单文件 bundle）
+├── scripts/
+│   ├── install-to-dsh.mjs # 装进 DSH profile（离线、无需 pnpm）：包体落位 + bundle 登记 + file: 依赖
+│   ├── preview.mjs        # 不装 DSH 时的本地预览（默认 3081）
+│   └── test.mjs           # 测试入口（esbuild 打包 TS 测试后交给 node --test）
+├── docs/                 # 使用说明：DDL 比较 / OceanBase / 安装到 DSH / OceanBase 验收记录
 ├── src/                  # 服务端（TypeScript，esbuild → lib/index.js）
 │   ├── index.ts          #   cordis 插件入口 apply(ctx, config)：获取 webServer 并挂载路由
 │   ├── routes.ts         #   /wangtie-os/api/* 全部 HTTP API（Mock 数据）—— 19 条
@@ -61,34 +66,51 @@ wangtie-os/
 （OceanBase Connector/J 即 MariaDB Connector/J 分支，实测 ODP 2883 不回应 Oracle 协议 TNS），
 因此连接方式与官方 JDBC 一致、SQL 全部使用 Oracle 方言。
 
-## 作为 DSH 插件安装（宿主 3080）
+## 作为 DSH 插件安装（随 dsh 启动，端口 3080）
 
-本包本身就是一个 **DSH bundle 插件**（`dsh.bundle.patch` + `cordis.patch.yml` + `dsh.client` 客户端半边），
-装进 web profile 后由宿主托管，访问 `http://127.0.0.1:3080/wangtie-os/`（不再需要 3081 的本地预览）。
+本包本身就是一个 **DSH bundle 插件**（`dsh.bundle.patch` + `cordis.patch.yml` + `dsh.client` 客户端半边）。
+装进某台机器的 profile 之后，**`dsh web` 启动就会加载王铁 OS**，访问 `http://127.0.0.1:3080/wangtie-os/`
+即可 —— 走 **DSH 自己的 3080 端口**，不再需要 3081 的预览服务。详见 [安装到 DSH](docs/安装到DSH.md)。
 
 ```sh
-# 1) 构建（产出 lib/index.js 与 client/client.js）
-node build.mjs
+# 交付包（zip）里已带 lib/ 构建产物与 node_modules，无需 npm install / npm run build
 
-# 2) 装进 web profile（DSH 官方插件流程）
-cd <deepseek-harness 目录>
-pnpm dsh plugin --profile web add file:<本项目绝对路径>
+# 1) 装进 profile（默认 web）—— 纯文件操作，不需要 pnpm，不需要联网
+node scripts/install-to-dsh.mjs
 
-# 3) 重启 dsh web —— 宿主半边只在进程启动时 import 一次，改代码后必须重启
+# 2) 重启 dsh web —— 宿主半边只在进程启动时 import 一次，改代码后必须重启
 #    （ui/ 静态文件是每次请求读盘，改前端刷新浏览器即可；侧边栏按钮由 client-hmr 热更新）
 
-# 4) 打开
+# 3) 打开
 #    http://127.0.0.1:3080/wangtie-os/
 #    http://127.0.0.1:3080/wangtie-os/api/health   （routes 应列出 22 条，debug.mountState 为空）
+
+# 卸载
+node scripts/install-to-dsh.mjs --uninstall
+```
+
+脚本只做三件 DSH 启动时真正必需的事（`--dry-run` 可以先看一遍）：
+① 把包放到 `<DSH_HOME>/profiles/<profile>/node_modules/wangtie-os`；
+② 在 `<profile>/package.json` 的 `dsh.profile.bundles` 末尾登记 `"wangtie-os"`（包自带的
+`cordis.patch.yml` 随即被应用，插件行即由此插入）；③ 写一条 `dependencies["wangtie-os"] = "file:<包路径>"`，
+与官方 `pnpm dsh plugin add` 的结果一致。会先备份 profile 的 `package.json`，可重复执行。
+
+在能访问 npm 源、也装了 pnpm 的机器上，等价的官方命令是：
+
+```sh
+cd <deepseek-harness 目录>
+pnpm dsh plugin --profile web add file:<本项目绝对路径>
 ```
 
 要点：
 
-- **宿主进程必须能解析 `mysql2`**（本包 `dependencies` 已声明；profile 的 node_modules 里通常已有）；
+- **包内已带 `node_modules`**（运行期只需其中的 `mysql2`），所以插件装上即用；若宿主 profile 里也有 `mysql2` 同样可用；
 - **DDL 比较的配置文件**放在 `$DSH_HOME/wangtie-os/ddl-environments.json`（推荐，不用进 node_modules）
   或 `<项目>/config/ddl-environments.json`；页面顶部会显示实际生效的路径；
 - 侧边栏入口按钮打开**同源** `/wangtie-os/`；
-- 只用预览服务（`npm run preview`，默认 3081）时功能与宿主版完全一致，两者可并存，代码同源。
+- `npm run preview`（默认 3081）只是**不装 DSH 时的离线预览/开发自测**入口，功能与宿主版完全一致、两者可并存；
+  已经装成插件后日常用 3080 即可；
+- 连库由**跑 dsh 的那台机器**发起（OceanBase 管理、DDL 比较都是服务端连接），内网地址要在那台机器上可达。
 
 ## DDL 比较的数据库地址从哪来
 
