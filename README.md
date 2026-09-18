@@ -51,6 +51,9 @@ wangtie-os/
     ├── oceanbase.js      #   OceanBase 管理页（Oracle 模式：Schema/表/字段/增删改查）
     ├── ddl-compare.js    #   DDL 比较页（SIT ↔ UAT 结构差异 + 左右 DDL 对照）
     ├── knowledge-data.js #   票据 / 会计知识库演示文档（前端内置，本地检索）
+    ├── zip.js            #   最小 ZIP 读取器（按中央目录，兼容数据描述符）
+    ├── docx.js           #   Word(.docx) 正文提取
+    ├── ofd.js            #   OFD(.ofd) 正文提取（按版面坐标还原成行）
     └── games/            #   休息一下内置游戏（独立单文件 HTML，iframe 全屏运行）
         ├── thunder-force.html      #   雷霆战机（纵版射击）
         ├── snake.html              #   贪吃蛇
@@ -72,22 +75,22 @@ wangtie-os/
 装进某台机器的 profile 之后，**`dsh web` 启动就会加载王铁 OS**，访问 `http://127.0.0.1:3080/wangtie-os/`
 即可 —— 走 **DSH 自己的 3080 端口**，不再需要 3081 的预览服务。详见 [安装到 DSH](docs/安装到DSH.md)。
 
-```sh
-# 交付包（zip）里已带 lib/ 构建产物与 node_modules，无需 npm install / npm run build
+**一条命令**（交付包 zip 里已带 `lib/` 构建产物与 `node_modules`，无需 npm install / npm run build）：
 
-# 1) 装进 profile（默认 web）—— 纯文件操作，不需要 pnpm，不需要联网
+```sh
+# 装包 → 登记 profile → 自动重启正在跑的 dsh web（宿主半边只在进程启动时 import 一次）
 node scripts/install-to-dsh.mjs
 
-# 2) 重启 dsh web —— 宿主半边只在进程启动时 import 一次，改代码后必须重启
-#    （ui/ 静态文件是每次请求读盘，改前端刷新浏览器即可；侧边栏按钮由 client-hmr 热更新）
+# 结束后打开：
+#   http://127.0.0.1:3080/wangtie-os/             ← 王铁 OS
+#   http://127.0.0.1:3080/wangtie-os/api/health   （routes 应列出 22 条，debug.mountState 为空）
 
-# 3) 打开
-#    http://127.0.0.1:3080/wangtie-os/
-#    http://127.0.0.1:3080/wangtie-os/api/health   （routes 应列出 22 条，debug.mountState 为空）
-
-# 卸载
-node scripts/install-to-dsh.mjs --uninstall
+# 其它：--no-restart 只装不重启；--restart-only 只重启；--uninstall 卸载
 ```
+
+自动重启按顺序尝试：装了 **dshmarket** 就走它的自重启接口；否则自己找监听端口的 dsh 进程、
+读出完整命令行与 cwd，起 detached 助手用同一命令拉起新进程再 SIGTERM 老进程；都不行则打印手动步骤。
+（`ui/` 静态文件是每次请求读盘，改前端刷新浏览器即可；侧边栏按钮由 client-hmr 热更新。）
 
 脚本只做三件 DSH 启动时真正必需的事（`--dry-run` 可以先看一遍）：
 ① 把包放到 `<DSH_HOME>/profiles/<profile>/node_modules/wangtie-os`；
@@ -173,7 +176,7 @@ pnpm dsh plugin --profile web add file:/Users/wangtie/Desktop/DeepSeek/deepseek-
 | 工作台 | `PAGES.dashboard` | `GET /api/app-info` | 首页入口（快捷卡片）+ 我的功能 / 系统概览 |
 | OceanBase 管理 | `PAGES.oceanbase` / `ui/oceanbase.js` | `POST /api/oceanbase/{connect,verify,profiles,tables,rows,insert,update,delete}` | **Oracle 兼容模式**租户真实连接（mysql2 + Oracle 方言）：模式（Schema）/表/视图/字段浏览、分页排序筛选、按主键或 ROWID 增删改查、当前页 CSV 导出；写前事务内锁行并校验原值，冲突 409、超时/断连标记结果未确认；连接档案可存多套（别名 + 环境，密码不落盘） |
 | DDL 比较 | `PAGES.ddlcompare` / `ui/ddl-compare.js` | `POST /api/oceanbase/{ddl-environments,ddl-test,ddl-compare}` | 读配置文件里的两套环境 → 抓两侧 Oracle 字典快照 → 对象（表/视图）、字段增删与类型/可空/默认值/注释、主键、索引、表注释差异 + 左右 DDL 对照；页面可「测试两个环境」；只读比较，不下发任何 DDL |
-| 知识库 | `PAGES.knowledge` | `GET /api/knowledge/search?q=`、`GET /api/knowledge/docs` | 二级知识库：**票据知识库**与**会计知识库**（内置 14 篇）；各自支持检索问答、粘贴/文件批量投喂，支持 .txt/.md/.json/**.docx（Word 自动提取正文）**（IndexedDB 持久化，`ui/knowledge-data.js`） |
+| 知识库 | `PAGES.knowledge` | `GET /api/knowledge/search?q=`、`GET /api/knowledge/docs` | 二级知识库：**票据知识库**与**会计知识库**（内置 14 篇）；各自支持检索问答、粘贴/文件批量投喂，支持 .txt/.md/.json/**.docx（Word 自动提取正文）**/**.ofd（OFD 版式文档 / 电子发票，按版面坐标还原正文）** 与图片 .png/.jpg/.webp/.gif（自动压缩保存）（IndexedDB 持久化；解析全部在浏览器本地完成，见 `ui/zip.js`、`ui/docx.js`、`ui/ofd.js`） |
 | 数据字典 | `PAGES.dictionary` | `GET /api/dictionary/entries`、`POST /api/dictionary/import` | 检索/分类/一键导入 |
 | 记事本 | `PAGES.notes` | —（纯前端，IndexedDB 持久化） | 印象笔记风格三栏笔记：笔记本分组/标签/置顶/Markdown 编辑与预览/搜索/自动保存/回收站/导出 .md 与 .json 备份恢复 |
 | 常用开发工具 | `PAGES.devtools` | —（纯前端，无 API） | JSON、Base64、URL 编解码、时间戳、文本统计、大小写转换（大写/小写/词首/句首/反转/变量风格）、哈希（SHA-1/256/384/512、CRC32）、进制转换（BigInt）、正则测试、颜色转换（HEX/RGB/HSL）、UUID 生成、压缩工具（打包压缩/分段压缩/解压） |

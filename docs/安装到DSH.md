@@ -3,21 +3,30 @@
 王铁 OS 本身就是一个 **DSH bundle 插件**：装进某个 profile 后，`dsh web` 启动就会加载它，
 访问 `http://127.0.0.1:3080/wangtie-os/` 即是王铁 OS —— **走 DSH 自己的端口（3080），不需要再开 3081 的预览服务**。
 
-## 三步搞定
+## 一条命令搞定
 
 ```sh
-# 0) 解压交付包，进入 wangtie-os 目录（包内已带 lib/ 构建产物与 node_modules，无需 npm install / npm run build）
-
-# 1) 装进 profile（默认 web；无需 pnpm、无需联网）
+# 解压交付包，进入 wangtie-os 目录（包内已带 lib/ 构建产物与 node_modules，无需 npm install / npm run build）
 node scripts/install-to-dsh.mjs
-
-# 2) 重启 dsh web（宿主半边只在进程启动时 import 一次，改代码后必须重启）
-#    Ctrl-C 停掉后重新执行：dsh web
-
-# 3) 打开
-#    http://127.0.0.1:3080/wangtie-os/
-#    http://127.0.0.1:3080/wangtie-os/api/health     ← routes 应含 22 条，debug.mountState 应为空
 ```
+
+这一条命令会：**装包 → 登记 profile → 自动重启正在跑的 dsh web**（宿主半边只在进程启动时 import 一次，
+不重启就不会加载插件），最后打印访问地址：
+
+```sh
+http://127.0.0.1:3080/wangtie-os/                  ← 王铁 OS
+http://127.0.0.1:3080/wangtie-os/api/health        ← routes 应含 22 条，debug.mountState 应为空
+```
+
+重启的方式（脚本按顺序尝试，都不行才让你手动重启）：
+1. profile 里装了 **dshmarket** → 走它的自重启接口 `POST /dsh-market/api/v1/restart`（最稳）；
+2. 否则自己找监听端口的 dsh 进程，读出它的**完整命令行与工作目录**，起一个 detached 助手
+   等端口释放后用同一命令拉起新进程，再给老进程发 SIGTERM（macOS/Linux 用 `lsof`/`ps`，
+   Windows 用 `netstat`/`wmic`/`taskkill`）；
+3. 都不可用 → 打印手动步骤：Ctrl-C 停掉 `dsh web`，再执行 `dsh web`。
+
+只想安装、自己重启（例如不想让脚本碰进程）：加 `--no-restart`。
+只想重启、不安装：`node scripts/install-to-dsh.mjs --restart-only`。
 
 ## 脚本做了什么（就这三件）
 
@@ -33,11 +42,15 @@ node scripts/install-to-dsh.mjs
 ## 常用参数
 
 ```sh
-node scripts/install-to-dsh.mjs --dry-run              # 只打印将要做什么，不改文件
-node scripts/install-to-dsh.mjs --profile web           # 指定 profile（缺省 web）
-node scripts/install-to-dsh.mjs --dsh-home /path/.dsh   # 指定 DSH_HOME（缺省 $DSH_HOME 或 ~/.dsh）
-node scripts/install-to-dsh.mjs --source /path/wangtie-os  # 指定安装源（缺省＝本包所在目录）
-node scripts/install-to-dsh.mjs --uninstall             # 卸载：移除 bundle 登记、依赖条目与目录（保留备份）
+node scripts/install-to-dsh.mjs --dry-run               # 只打印将要做什么，不改文件
+node scripts/install-to-dsh.mjs --profile web            # 指定 profile（缺省 web）
+node scripts/install-to-dsh.mjs --dsh-home /path/.dsh    # 指定 DSH_HOME（缺省 $DSH_HOME 或 ~/.dsh）
+node scripts/install-to-dsh.mjs --source /path/wangtie-os # 指定安装源（缺省＝本包所在目录）
+node scripts/install-to-dsh.mjs --port 3080              # dsh web 端口（自动重启时用它找进程）
+node scripts/install-to-dsh.mjs --no-restart             # 只安装，不重启
+node scripts/install-to-dsh.mjs --restart-only           # 只重启，不安装
+node scripts/install-to-dsh.mjs --uninstall              # 卸载：移除登记、依赖条目与目录（同样会自动重启）
+node scripts/install-to-dsh.mjs --help
 node scripts/install-to-dsh.mjs --help
 ```
 

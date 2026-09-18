@@ -6,6 +6,9 @@
 
 // 知识库（票据 / 会计）内置演示文档（前端内置数据，本地检索，无需后端）
 import { KNOWLEDGE, KNOWLEDGE_ACCOUNTING } from './knowledge-data.js'
+import { extractDocxText } from './docx.js'
+import { extractOfdMeta, extractOfdText } from './ofd.js'
+import { readEntry, zipEntries } from './zip.js'
 import { renderOceanBase } from './oceanbase.js'
 import { renderDdlCompare } from './ddl-compare.js'
 
@@ -194,8 +197,38 @@ const KB_NAMES = { bill: '票据知识库', acc: '会计知识库' }
 
 // ---- 投喂知识存储：IndexedDB，按命名空间保存 { bill:[...], acc:[...] }，并兼容旧版 localStorage ----
 const KB_DB_NAME = 'wangtie-os-kb'
+/** 改名折腾期间的库名：新库读不到数据时来这里兜一次，两边的投喂记录都不会丢。 */
+const KB_DB_LEGACY = 'piaoju-os-kb'
 const KB_DB_STORE = 'docs'
 const KB_LEGACY_KEY = 'wangtie-kb-custom-docs'
+
+/**
+ * 只读打开一个 IndexedDB（不指定版本、不建对象仓库）。
+ * 库不存在时浏览器会新建一个空库，随后 transaction 会因缺对象仓库抛错，
+ * 由调用方吞掉并返回 undefined —— 恰好等价于「没有旧数据」。
+ */
+function openIdbReadOnly(name) {
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(name)
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => resolve(null)
+    } catch (error) { resolve(null) }
+  })
+}
+
+async function idbGet(name, store, key) {
+  const db = await openIdbReadOnly(name)
+  if (!db) return undefined
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(store, 'readonly')
+      const rq = tx.objectStore(store).get(key)
+      rq.onsuccess = () => resolve(rq.result)
+      rq.onerror = () => reject(rq.error)
+    })
+  } catch (error) { return undefined } finally { try { db.close() } catch (error) { /* 已关闭 */ } }
+}
 
 function openKbDb() {
   return new Promise((resolve, reject) => {
@@ -208,13 +241,7 @@ function openKbDb() {
 
 async function idbReadKbMap() {
   try {
-    const db = await openKbDb()
-    const value = await new Promise((resolve, reject) => {
-      const tx = db.transaction(KB_DB_STORE, 'readonly')
-      const rq = tx.objectStore(KB_DB_STORE).get('all')
-      rq.onsuccess = () => resolve(rq.result)
-      rq.onerror = () => reject(rq.error)
-    })
+    const value = (await idbGet(KB_DB_NAME, KB_DB_STORE, 'all')) ?? (await idbGet(KB_DB_LEGACY, KB_DB_STORE, 'all'))
     // 旧版数组格式 → 视为票据知识库的投喂文档
     if (Array.isArray(value)) return { bill: value, acc: [] }
     return { bill: [], acc: [], ...(value || {}) }
@@ -392,57 +419,6 @@ async function downscaleImage(dataUrl, maxSide = 1024, quality = 0.85) {
 }
 
 
-// —— Word（.docx）正文提取：.docx 本质是 ZIP，读取 word/document.xml 后按段取文本 ——
-function docxEntries(bytes) {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const entries = []
-  let off = 0
-  while (off + 30 <= bytes.length) {
-    const sig = view.getUint32(off, true)
-    if (sig === 0x04034b50) { // 本地文件头
-      const method = view.getUint16(off + 8, true)
-      const compSize = view.getUint32(off + 18, true)
-      const nameLen = view.getUint16(off + 26, true)
-      const extraLen = view.getUint16(off + 28, true)
-      const name = new TextDecoder().decode(bytes.subarray(off + 30, off + 30 + nameLen))
-      const dataStart = off + 30 + nameLen + extraLen
-      entries.push({ name, method, data: bytes.subarray(dataStart, dataStart + compSize) })
-      off = dataStart + compSize
-      continue
-    }
-    break // 中心目录或其他 → 结束
-  }
-  return entries
-}
-
-async function inflateRawDeflate(compressed) {
-  if (typeof DecompressionStream === 'undefined') {
-    throw new Error('当前浏览器不支持 docx 解压（请使用新版 Chrome / Safari）')
-  }
-  const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'))
-  const buf = await new Response(stream).arrayBuffer()
-  return new Uint8Array(buf)
-}
-
-async function extractDocxText(bytes) {
-  const entry = docxEntries(bytes).find((e) => e.name === 'word/document.xml')
-  if (!entry) throw new Error('未找到 word/document.xml（文件可能不是有效的 .docx）')
-  let xmlBytes
-  if (entry.method === 0) xmlBytes = entry.data                       // 未压缩
-  else if (entry.method === 8) xmlBytes = await inflateRawDeflate(entry.data) // DEFLATE
-  else throw new Error(`不支持的压缩方式（method=${entry.method}）`)
-  const xml = new TextDecoder().decode(xmlBytes)
-  const text = xml
-    .replace(/<w:tab[^>]*\/>/g, '\t')
-    .replace(/<w:br[^>]*\/>/g, '\n')
-    .replace(/<\/w:p>/g, '\n')
-    .replace(/<\/w:tr>/g, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&apos;|&#39;/g, "'")
-  return text.split(/\n+/).map((line) => line.trim()).filter(Boolean)
-}
-
 PAGES.knowledge = (el) => {
   const activeKb = () => (state.kb === 'acc' ? 'acc' : 'bill')
   const setActive = (ns) => { state.kb = ns }
@@ -472,7 +448,7 @@ PAGES.knowledge = (el) => {
       <div class="card" style="margin-bottom:0">
         <div class="row" style="justify-content:space-between;flex-wrap:wrap">
           <h3 style="margin:0">${name} <span class="muted" id="kb-stats"></span></h3>
-          <span class="muted">支持粘贴多篇投喂与 .txt/.md/.json 文件批量上传</span>
+          <span class="muted">支持粘贴多篇投喂与 .txt/.md/.json/.docx/.ofd 文件批量上传</span>
         </div>
         <div class="row" style="margin-top:10px">
           <input type="text" id="kb-q" placeholder="输入问题，例如：商业汇票到期托收的流程是什么" style="flex:1">
@@ -496,8 +472,8 @@ PAGES.knowledge = (el) => {
 
       <div class="card" id="kb-upload" style="display:none">
         <h3>⬆ 上传知识文件批量投喂 → ${name}</h3>
-        <div class="kb-drop" id="kb-drop">点击选择或拖入知识文件（可多选）<br><span class="muted">支持 .txt / .md、.json、.docx（Word 自动提取正文）与 .png/.jpg/.webp/.gif（图片条目，自动压缩保存并可在列表预览）</span></div>
-        <input type="file" id="kb-file" accept=".txt,.md,.markdown,.json,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp,text/plain,application/json,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*" multiple hidden>
+        <div class="kb-drop" id="kb-drop">点击选择或拖入知识文件（可多选）<br><span class="muted">支持 .txt / .md、.json、.docx（Word 自动提取正文）、.ofd（OFD 版式文档 / 电子发票，按版面还原正文）与 .png/.jpg/.webp/.gif（图片条目，自动压缩保存并可在列表预览）</span></div>
+        <input type="file" id="kb-file" accept=".txt,.md,.markdown,.json,.docx,.ofd,.png,.jpg,.jpeg,.webp,.gif,.bmp,text/plain,application/json,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/ofd,application/x-ofd,image/*" multiple hidden>
         <div class="muted" style="line-height:1.8;margin-top:8px">JSON 示例：<code>[{"title":"票据池业务要点","category":"业务规则","paragraphs":["…","…"]}]</code></div>
         <div class="row" style="margin-top:8px"><span class="muted" id="kb-upload-note"></span></div>
       </div>
@@ -616,6 +592,16 @@ PAGES.knowledge = (el) => {
             const lines = await extractDocxText(await readFileAsBuffer(file))
             if (!lines.length) throw new Error('Word 文档中未提取到正文')
             docs = [{ title: file.name.replace(/\.docx$/i, '').trim() || 'Word 文档', category: '业务规则', paragraphs: lines }]
+          } else if (lower.endsWith('.ofd')) {
+            const bytes = await readFileAsBuffer(file)
+            const lines = await extractOfdText(bytes)
+            const meta = await extractOfdMeta(bytes)
+            const base = file.name.replace(/\.ofd$/i, '').trim()
+            docs = [{
+              title: meta.title || base || 'OFD 文档',
+              category: 'OFD 文档',
+              paragraphs: meta.pages > 1 ? [`（OFD 版式文档，共 ${meta.pages} 页，已按版面还原正文）`, ...lines] : lines,
+            }]
           } else if (/^\.(png|jpe?g|webp|gif|bmp)$/.test(file.name.slice(file.name.lastIndexOf('.')))) {
             const dataUrl = await downscaleImage(await readFileAsDataURL(file))
             const base = file.name.replace(/\.[^.]+$/, '').trim() || '图片知识'
@@ -630,7 +616,7 @@ PAGES.knowledge = (el) => {
             docs = lower.endsWith('.json') ? parseJsonDocs(text) : parseDocBlocks(text)
           }
           if (docs.length === 0) {
-            errors.push(`${file.name}：未识别到文档（.txt/.md 需以【标题】分篇，.json 需为文档数组，.docx 需为 Word 文档）`)
+            errors.push(`${file.name}：未识别到文档（.txt/.md 需以【标题】分篇，.json 需为文档数组，.docx 需为 Word 文档，.ofd 需为 OFD 版式文档）`)
             continue
           }
           recognized += docs.length
@@ -1079,6 +1065,8 @@ PAGES.health = (el) => {
 
 // 存储：IndexedDB —— 笔记列表(键 all) + 笔记本列表(键 notebooks)
 const NOTE_DB = 'wangtie-os-notes'
+/** 改名折腾期间的库名：新库读不到时兜一次，已有笔记不丢（写入一律落新库）。 */
+const NOTE_DB_LEGACY = 'piaoju-os-notes'
 const NOTE_STORE = 'items'
 const NOTE_DEFAULT_NB = ['默认笔记本', '开发速记', '票据业务', '会计']
 let notesSeq = 0
@@ -1096,13 +1084,7 @@ function openNotesDb() {
 
 async function idbNotesGet(key) {
   try {
-    const db = await openNotesDb()
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(NOTE_STORE, 'readonly')
-      const rq = tx.objectStore(NOTE_STORE).get(key)
-      rq.onsuccess = () => resolve(rq.result)
-      rq.onerror = () => reject(rq.error)
-    })
+    return (await idbGet(NOTE_DB, NOTE_STORE, key)) ?? (await idbGet(NOTE_DB_LEGACY, NOTE_STORE, key))
   } catch (error) { return undefined }
 }
 
@@ -1802,9 +1784,7 @@ function humanSize(n) {
 }
 
 async function zipInflateEntry(entry) {
-  if (entry.method === 0) return entry.data
-  if (entry.method === 8) return inflateRawDeflate(entry.data)
-  throw new Error(`不支持的压缩方式 method=${entry.method}`)
+  return readEntry(entry)
 }
 function downloadBytes(filename, bytes, type = 'application/octet-stream') {
   const a = document.createElement('a')
@@ -2431,7 +2411,7 @@ PAGES.devtools = (el) => {
             } else {
               zipBytes = await readFileAsBuffer(files[0])
             }
-            const entries = docxEntries(zipBytes)
+            const entries = zipEntries(zipBytes)
             if (!entries.length) throw new Error('不是有效的 ZIP 压缩包')
             const realEntries = entries.filter((e) => !/\/$/.test(e.name))
             const rows = realEntries.length
